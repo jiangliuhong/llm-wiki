@@ -12,7 +12,8 @@
     "dev": "pnpm --filter @llm-wiki/web dev",
     "build": "pnpm -r run build",
     "lint": "pnpm -r run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "global:install": "bash install.sh"
   },
   "devDependencies": {
     "eslint": "^10.5.0",
