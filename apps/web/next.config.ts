@@ -5,6 +5,9 @@ import type { NextConfig } from "next";
  *
  * - `transpilePackages` is required for HeroUI v3 (per the official Next.js +
  *   HeroUI guide) so its ESM packages are transpiled to a form Next can bundle.
+ * - `serverExternalPackages` keeps native Node addons (`better-sqlite3`,
+ *   `sqlite-vec`) out of the bundler: Next must `require()` them at runtime
+ *   rather than try to bundle their `.node` binaries.
  *
  * Note: Next.js 16 removed the `next lint` command and its built-in lint step,
  * so there is no `eslint` config key here. Linting is run explicitly via
@@ -13,6 +16,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@heroui/react"],
+  serverExternalPackages: ["better-sqlite3", "sqlite-vec"],
 };
 
 export default nextConfig;

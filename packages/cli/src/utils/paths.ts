@@ -17,22 +17,22 @@ export function getCwd(): string {
   return process.cwd();
 }
 
-/** Absolute path to the `.lllm-wiki` directory in the current working directory. */
+/** Absolute path to the `.llm-wiki` directory in the current working directory. */
 export function getWikiDir(cwd: string = getCwd()): string {
   return nodePath.resolve(cwd, WIKI_DIR_NAME);
 }
 
-/** Absolute path to `.lllm-wiki/config.json` in the current working directory. */
+/** Absolute path to `.llm-wiki/config.json` in the current working directory. */
 export function getConfigPath(cwd: string = getCwd()): string {
   return nodePath.resolve(getWikiDir(cwd), CONFIG_FILE_NAME);
 }
 
-/** Whether the `.lllm-wiki` directory already exists. */
+/** Whether the `.llm-wiki` directory already exists. */
 export function wikiDirExists(cwd: string = getCwd()): boolean {
   return nodeFs.existsSync(getWikiDir(cwd));
 }
 
-/** Whether a config file already exists in the `.lllm-wiki` directory. */
+/** Whether a config file already exists in the `.llm-wiki` directory. */
 export function configExists(cwd: string = getCwd()): boolean {
   return nodeFs.existsSync(getConfigPath(cwd));
 }

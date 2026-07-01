@@ -125,7 +125,7 @@ export async function startNextServer(options: ServeOptions): Promise<ServeResul
         reject(
           new Error(
             `Port ${config.port} is already in use. ` +
-              `Set a different "port" in .lllm-wiki/config.json and try again.`,
+              `Set a different "port" in .llm-wiki/config.json and try again.`,
           ),
         );
       } else {
@@ -156,14 +156,14 @@ export async function startNextServer(options: ServeOptions): Promise<ServeResul
  * that by attempting to create a probe file.
  */
 function ensureNextCacheWritable(dir: string): void {
-  const probe = nodePath.join(dir, `.lllm-write-probe-${process.pid}`);
+  const probe = nodePath.join(dir, `.llm-write-probe-${process.pid}`);
   try {
     nodeFs.writeFileSync(probe, "");
     nodeFs.unlinkSync(probe);
     return; // writable — let Next use `<dir>/.next` as normal.
   } catch {
     // Not writable: redirect `.next` into the OS temp directory.
-    const tmp = nodePath.join(tmpdir(), `lllm-wiki-next-${sanitise(dir)}`);
+    const tmp = nodePath.join(tmpdir(), `llm-wiki-next-${sanitise(dir)}`);
     nodeFs.mkdirSync(tmp, { recursive: true });
     process.env.NEXT_DIST_DIR = nodePath.join(tmp, ".next");
     logger.warn(`Web directory is read-only; using cache at ${tmp}`);

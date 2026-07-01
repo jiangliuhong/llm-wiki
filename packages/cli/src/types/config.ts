@@ -1,22 +1,51 @@
 /**
- * Shape of the `.lllm-wiki/config.json` file written by `lllm-wiki-cli init`
- * and read by `lllm-wiki-cli serve`.
+ * Shape of the `.llm-wiki/config.json` file written by `llm-wiki-cli init`
+ * and read by `llm-wiki-cli serve` / `index` / `search`.
+ *
+ * `kb` is optional: older configs written before the knowledge-base feature
+ * exist will simply omit it, and `loadConfig` fills in the defaults.
  */
+export interface WikiKbChunkConfig {
+  maxChars: number;
+  overlap: number;
+}
+
+export interface WikiKbEmbeddingConfig {
+  dimensions: number;
+}
+
+export interface WikiKbConfig {
+  /** Directories to scan recursively (relative to the project root). */
+  include: string[];
+  /** Directory names to skip while scanning. */
+  exclude: string[];
+  chunk: WikiKbChunkConfig;
+  embedding: WikiKbEmbeddingConfig;
+}
+
 export interface WikiConfig {
   /** Title shown in the web UI / document title. */
   title: string;
   /** Port the local Next.js server listens on. */
   port: number;
+  /** Knowledge-base indexing/search settings. Optional for backward compat. */
+  kb?: WikiKbConfig;
 }
 
 /** The default config used by `init` when no existing config is present. */
 export const DEFAULT_CONFIG: Readonly<WikiConfig> = {
   title: "My Wiki",
   port: 3000,
+  kb: {
+    include: ["wiki"],
+    exclude: ["node_modules", ".git", ".llm-wiki", "dist", "build", "out"],
+    chunk: { maxChars: 1200, overlap: 200 },
+    embedding: { dimensions: 1536 },
+  },
 };
 
 /** Directory name (relative to the user's working directory) for wiki data. */
-export const WIKI_DIR_NAME = ".lllm-wiki";
+export const WIKI_DIR_NAME = ".llm-wiki";
 
 /** Config file name inside {@link WIKI_DIR_NAME}. */
 export const CONFIG_FILE_NAME = "config.json";

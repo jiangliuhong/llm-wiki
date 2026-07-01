@@ -2,6 +2,8 @@
 import { Command } from "commander";
 import { makeInitCommand } from "./commands/init.js";
 import { makeServeCommand } from "./commands/serve.js";
+import { makeIndexCommand } from "./commands/index.js";
+import { makeSearchCommand } from "./commands/search.js";
 import { logger } from "./utils/logger.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -9,7 +11,7 @@ import nodePath from "node:path";
 
 /**
  * CLI entrypoint. Compiles to `dist/index.js` with a `#!/usr/bin/env node`
- * shebang so the `lllm-wiki-cli` bin works directly.
+ * shebang so the `llm-wiki-cli` bin works directly.
  */
 
 function readVersion(): string {
@@ -36,12 +38,14 @@ function readVersion(): string {
 const program = new Command();
 
 program
-  .name("lllm-wiki-cli")
-  .description("Scaffold and serve a local LLLM Wiki (Next.js + HeroUI).")
-  .version(readVersion(), "-v, --version", "Print the lllm-wiki-cli version")
+  .name("llm-wiki-cli")
+  .description("Index, search, and serve a local knowledge-base wiki (Next.js + HeroUI).")
+  .version(readVersion(), "-v, --version", "Print the llm-wiki-cli version")
   .helpOption("-h, --help", "Show this help message");
 
 program.addCommand(makeInitCommand());
+program.addCommand(makeIndexCommand());
+program.addCommand(makeSearchCommand());
 program.addCommand(makeServeCommand());
 
 // Friendly top-level error handling so we never dump an unhandled rejection.

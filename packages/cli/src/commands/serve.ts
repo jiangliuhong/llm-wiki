@@ -5,9 +5,9 @@ import { startNextServer } from "../services/next-server.js";
 import { logger } from "../utils/logger.js";
 
 /**
- * `lllm-wiki-cli serve`
+ * `llm-wiki-cli serve`
  *
- * Loads `.lllm-wiki/config.json` and boots the bundled Next.js app in-process
+ * Loads `.llm-wiki/config.json` and boots the bundled Next.js app in-process
  * (no shell, no child_process).
  */
 export function makeServeCommand(): Command {
@@ -15,7 +15,7 @@ export function makeServeCommand(): Command {
 
   command
     .description("Serve the LLLM Wiki web app locally")
-    .option("-p, --port <port>", "Override the port from .lllm-wiki/config.json", (value: string) =>
+    .option("-p, --port <port>", "Override the port from .llm-wiki/config.json", (value: string) =>
       parsePort(value),
     )
     .option("--prod", "Run the built app instead of dev mode", false)

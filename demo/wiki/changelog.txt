@@ -1,0 +1,11 @@
+Changelog
+---------
+
+v0.1.0
+  - Initial release of llm-wiki-cli.
+  - Commands: init, index, search, serve.
+  - Hybrid search with sqlite-vec fallback.
+
+v0.2.0 (planned)
+  - Web search UI improvements.
+  - Better chunk overlap handling.

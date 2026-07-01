@@ -21,7 +21,7 @@ export default tseslint.config(
       "**/build/**",
       "**/out/**",
       "**/*.tsbuildinfo",
-      "**/.lllm-wiki/**",
+      "**/.llm-wiki/**",
       // Next.js-generated type file uses triple-slash references by design.
       "apps/web/next-env.d.ts",
       // Next.js-generated; not hand-written.

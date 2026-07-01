@@ -1,5 +1,5 @@
 {
-  "name": "lllm-wiki-cli",
+  "name": "llm-wiki-cli",
   "version": "0.1.0",
   "private": true,
   "description": "Local AI Wiki Platform CLI - scaffold and serve a local Wiki powered by Next.js + HeroUI.",
@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "pnpm --filter @lllm-wiki/web dev",
+    "dev": "pnpm --filter @llm-wiki/web dev",
     "build": "pnpm -r run build",
     "lint": "pnpm -r run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\""

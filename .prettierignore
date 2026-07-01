@@ -6,4 +6,4 @@ build
 coverage
 pnpm-lock.yaml
 *.tsbuildinfo
-.lllm-wiki
+.llm-wiki

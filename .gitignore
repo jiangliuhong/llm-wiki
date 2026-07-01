@@ -128,8 +128,11 @@ dist
 # pnpm
 .pnpm-store
 
-# lllm-wiki CLI runtime artifacts
-.lllm-wiki/
+# llm-wiki CLI runtime artifacts
+.llm-wiki/
+
+# macOS
+.DS_Store
 
 # yarn v3
 .pnp.*
