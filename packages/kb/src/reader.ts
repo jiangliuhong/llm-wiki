@@ -5,6 +5,7 @@ import type {
   KbStats,
   KbFileListPage,
   KbFileDetail,
+  KbFileContent,
   KbChunk,
   ListFilesOptions,
 } from "./types.js";
@@ -192,6 +193,53 @@ export function getFileDetail(fileId: number, options: OpenOptions = {}): KbFile
     }>;
 
     return { file, chunks };
+  });
+}
+
+/**
+ * A file's full content, reassembled by concatenating its chunks in order.
+ *
+ * Returns `null` if the base tables are missing or the file id is unknown.
+ * The returned `content` joins chunk `content` values with `\n`; the
+ * per-chunk line ranges are preserved in `chunks` so callers can render
+ * source anchors or derive a table of contents.
+ */
+export function getFileContent(fileId: number, options: OpenOptions = {}): KbFileContent | null {
+  return withReadonlyDb(options, (conn) => {
+    const db = conn.db;
+    if (!baseTablesOk(db)) return null;
+
+    const file = db
+      .prepare(`SELECT id, path, language FROM files WHERE id = ?`)
+      .get(fileId) as { id: number; path: string; language: string } | undefined;
+    if (!file) return null;
+
+    const chunks = db
+      .prepare(
+        `SELECT id, chunk_index AS chunkIndex, start_line AS startLine, end_line AS endLine, content
+           FROM chunks WHERE file_id = ? ORDER BY chunk_index ASC`,
+      )
+      .all(fileId) as Array<{
+      id: number;
+      chunkIndex: number;
+      startLine: number;
+      endLine: number;
+      content: string;
+    }>;
+
+    const content = chunks.map((c) => c.content).join("\n");
+    return {
+      fileId: file.id,
+      path: file.path,
+      language: file.language,
+      content,
+      chunks: chunks.map(({ id, chunkIndex, startLine, endLine }) => ({
+        id,
+        chunkIndex,
+        startLine,
+        endLine,
+      })),
+    };
   });
 }
 

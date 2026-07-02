@@ -1,34 +1,45 @@
-import KbSearch from "@/components/KbSearch";
+import { redirect } from "next/navigation";
+import { listFiles } from "@llm-wiki/kb";
+import SearchResults from "@/components/SearchResults";
 
 /**
- * Home page — knowledge-base search.
+ * Home route.
  *
- * The CLI sets `NEXT_PUBLIC_WIKI_TITLE` before booting Next.js (see
- * `packages/cli/src/services/next-server.ts`); we fall back to a sensible
- * default when the app is run standalone (e.g. `pnpm --filter web dev`).
+ * - `?q=<query>`: render search results in the content area (triggered from
+ *   the top nav search box).
+ * - otherwise: jump to the first indexed file so the doc viewer is never
+ *   empty. If nothing is indexed yet, show a friendly empty state.
  */
-const wikiTitle = process.env.NEXT_PUBLIC_WIKI_TITLE ?? "LLLM Wiki";
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}): Promise<React.ReactElement> {
+  const { q } = await searchParams;
 
-export default function HomePage(): React.ReactElement {
+  if (q && q.trim().length > 0) {
+    return (
+      <div className="h-full overflow-y-auto">
+        <SearchResults query={q.trim()} />
+      </div>
+    );
+  }
+
+  const page = listFiles({ page: 1, pageSize: 1 });
+  const first = page.files[0];
+  if (first) {
+    redirect(`/files/${first.id}`);
+  }
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-4xl flex-col gap-8 px-6 py-12">
-      <header className="flex flex-col items-center gap-3 text-center">
-        <span className="rounded-full bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
-          {wikiTitle}
-        </span>
-        <h1 className="text-balance text-3xl font-bold tracking-tight sm:text-4xl">
-          Knowledge Base Search
-        </h1>
-        <p className="text-balance text-default-500">
-          Search your local wiki with hybrid full-text + vector retrieval.
+    <div className="flex h-full items-center justify-center p-8">
+      <div className="max-w-md text-center">
+        <h1 className="text-2xl font-semibold">No documents indexed yet</h1>
+        <p className="mt-2 text-default-500">
+          Run <code className="rounded bg-default-100 px-1.5 py-0.5">llm-wiki-cli index</code> to
+          populate the knowledge base, then refresh this page.
         </p>
-      </header>
-
-      <KbSearch />
-
-      <footer className="mt-auto pt-8 text-center text-sm text-default-400">
-        Next.js 16 · HeroUI v3 · SQLite FTS5 + sqlite-vec
-      </footer>
-    </main>
+      </div>
+    </div>
   );
 }

@@ -14,6 +14,7 @@ export type {
   KbFileSummary,
   KbChunk,
   KbFileDetail,
+  KbFileContent,
   KbLanguageStat,
   KbRootStat,
   KbStats,
@@ -52,4 +53,4 @@ export { generateEmbedding, float32ToBytes } from "./embedding.js";
 // Indexing / search / reading
 export { indexFiles, type IndexRunOptions } from "./indexer.js";
 export { searchKnowledgeBase, DEFAULT_SEARCH_LIMIT, type SearchRunOptions } from "./search.js";
-export { getKbStats, listFiles, getFileDetail, getChunkDetail } from "./reader.js";
+export { getKbStats, listFiles, getFileDetail, getFileContent, getChunkDetail } from "./reader.js";

@@ -15,7 +15,9 @@
     "better-sqlite3": "^11.8.1",
     "next": "^16.2.9",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "react-markdown": "^9.0.3",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.1",

@@ -83,6 +83,24 @@ export interface KbFileDetail {
   chunks: Pick<KbChunk, "id" | "chunkIndex" | "startLine" | "endLine">[];
 }
 
+/**
+ * A file's full, reconstructed content.
+ *
+ * Chunks are stored separately and indexed by `chunk_index`; this view
+ * concatenates them back into a single document for rendering (e.g. the
+ * web reader). The per-chunk line ranges are kept so a UI can render
+ * source anchors or a table of contents.
+ */
+export interface KbFileContent {
+  fileId: number;
+  path: string;
+  language: string;
+  /** The full content of the file, reassembled from its chunks. */
+  content: string;
+  /** Per-chunk metadata, ordered by `chunkIndex`. */
+  chunks: Pick<KbChunk, "id" | "chunkIndex" | "startLine" | "endLine">[];
+}
+
 /** Per-language file count, for stats. */
 export interface KbLanguageStat {
   language: string;
