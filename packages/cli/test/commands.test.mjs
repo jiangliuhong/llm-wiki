@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -21,6 +21,35 @@ function run(cwd, args) {
     env: { ...process.env, NO_COLOR: "1" },
   });
 }
+
+test("init installs the bundled project skills", () => {
+  const cwd = makeProject();
+
+  for (const skill of ["kb-write-docs", "kb-search-docs"]) {
+    const skillFile = path.join(cwd, ".agents", "skills", skill, "SKILL.md");
+    const metadataFile = path.join(cwd, ".agents", "skills", skill, "agents", "openai.yaml");
+    assert.equal(existsSync(skillFile), true);
+    assert.equal(existsSync(metadataFile), true);
+    assert.match(readFileSync(skillFile, "utf8"), new RegExp(`name: ${skill}`));
+  }
+});
+
+test("init adds missing skills without overwriting existing skills or config", () => {
+  const cwd = makeProject();
+  const skillFile = path.join(cwd, ".agents", "skills", "kb-search-docs", "SKILL.md");
+  const missingSkill = path.join(cwd, ".agents", "skills", "kb-write-docs");
+  const configFile = path.join(cwd, ".llm-wiki", "config.json");
+  const configBefore = readFileSync(configFile, "utf8");
+  writeFileSync(skillFile, "custom skill\n", "utf8");
+  rmSync(missingSkill, { recursive: true });
+
+  const initialized = run(cwd, ["init", "--title", "Changed"]);
+
+  assert.equal(initialized.status, 0, initialized.stderr);
+  assert.equal(readFileSync(skillFile, "utf8"), "custom skill\n");
+  assert.equal(existsSync(path.join(missingSkill, "SKILL.md")), true);
+  assert.equal(readFileSync(configFile, "utf8"), configBefore);
+});
 
 test("search before index is handled without an unhandled stack trace", () => {
   const cwd = makeProject();

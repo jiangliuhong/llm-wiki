@@ -84,6 +84,7 @@ llm-wiki-cli init [--title <title>] [--port <port>]
 - 创建 `.llm-wiki/config.json`；
 - 创建默认内容目录 `wiki/`；
 - 当 `wiki/` 不存在时，创建示例文件 `wiki/welcome.md`。
+- 在 `.agents/skills/` 安装用于拆分写入与检索 Wiki 的项目 skills。
 
 选项：
 
@@ -99,7 +100,7 @@ mkdir my-wiki && cd my-wiki
 llm-wiki-cli init --title "研发 Wiki" --port 3100
 ```
 
-如果 `.llm-wiki/config.json` 已存在，命令会给出提示并停止，不会覆盖已有配置或文档。
+如果 `.llm-wiki/config.json` 或同名 skill 已存在，命令会保留已有内容；再次执行可补装缺失的内置 skill。
 
 ## 5. `index`：建立或更新索引
 

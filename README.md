@@ -62,7 +62,7 @@ pnpm --filter @llm-wiki/cli link --global
 在一个**空目录**里（或你希望作为知识库根目录的项目里）：
 
 ```bash
-llm-wiki-cli init        # 初始化：写配置 + 建 wiki/ 目录
+llm-wiki-cli init        # 初始化：写配置 + 建 wiki/ 目录 + 安装项目 skills
 # 把你的文档放进 wiki/（Markdown、代码、文本等均可）
 llm-wiki-cli index       # 索引：扫描 → 切片 → 嵌入 → 入库
 llm-wiki-cli search "你的查询词"   # 命令行检索
@@ -81,8 +81,8 @@ llm-wiki-cli serve [options]
 
 ### `init` — 初始化知识库
 
-在当前工作目录创建 `.llm-wiki/config.json`，并生成 `wiki/` 内容目录（含一个占位 `welcome.md`）。
-若配置已存在，会打印警告并中止，**不会覆盖**已有知识库。
+在当前工作目录创建 `.llm-wiki/config.json`、`wiki/` 内容目录（含一个占位 `welcome.md`），并在 `.agents/skills/` 安装 `kb-write-docs` 与 `kb-search-docs`。
+若配置或同名 skill 已存在，命令会保留已有内容；再次执行可补装缺失的内置 skill。
 
 ```bash
 llm-wiki-cli init [--title <标题>] [--port <端口>]

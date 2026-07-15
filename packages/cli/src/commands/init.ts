@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import nodeFs from "node:fs";
 import nodePath from "node:path";
+import { fileURLToPath } from "node:url";
 import { getDefaultConfig, saveConfig, hasConfig } from "../utils/config.js";
 import { getConfigPath } from "../utils/paths.js";
 import { logger } from "../utils/logger.js";
@@ -12,7 +13,8 @@ import { logger } from "../utils/logger.js";
  *   - creates `.llm-wiki/`
  *   - writes `.llm-wiki/config.json` with the default config (incl. `kb`)
  *   - creates a `wiki/` content directory with a placeholder file
- *   - refuses to clobber an existing config
+ *   - installs the bundled project skills under `.agents/skills/`
+ *   - refuses to clobber an existing config or skill
  *
  * Returns the program so it can be composed by `index.ts`.
  */
@@ -45,11 +47,13 @@ interface InitOptions {
 }
 
 function runInit(options: InitOptions): void {
+  const createdSkills = createSkills();
+
   if (hasConfig()) {
     logger.warn(
-      `A config already exists at ${getConfigPath()}.\n` +
-        `Remove it first if you want to reinitialize.`,
+      `A config already exists at ${getConfigPath()}.\n` + `The existing config was not changed.`,
     );
+    logCreatedSkills(createdSkills);
     return;
   }
 
@@ -62,8 +66,43 @@ function runInit(options: InitOptions): void {
 
   logger.success(`Wiki initialized successfully`);
   logger.info(`Created ${getConfigPath()}`);
+  logCreatedSkills(createdSkills);
   logger.info(`Title: "${config.title}"  Port: ${config.port}`);
   logger.info(`Next: add files to wiki/ and run "llm-wiki-cli index".`);
+}
+
+const BUNDLED_SKILLS = ["kb-write-docs", "kb-search-docs"] as const;
+
+/** Installs missing bundled skills without changing user-customized copies. */
+function createSkills(): string[] {
+  const sourceRoot = nodePath.resolve(
+    nodePath.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "skills",
+  );
+  const targetRoot = nodePath.resolve(process.cwd(), ".agents", "skills");
+  const created: string[] = [];
+
+  for (const skill of BUNDLED_SKILLS) {
+    const source = nodePath.join(sourceRoot, skill);
+    const target = nodePath.join(targetRoot, skill);
+    if (nodeFs.existsSync(target)) {
+      logger.info(`Kept existing ${nodePath.relative(process.cwd(), target)}`);
+      continue;
+    }
+    nodeFs.mkdirSync(targetRoot, { recursive: true });
+    nodeFs.cpSync(source, target, { recursive: true, errorOnExist: true });
+    created.push(nodePath.relative(process.cwd(), target));
+  }
+
+  return created;
+}
+
+function logCreatedSkills(skills: string[]): void {
+  for (const skill of skills) {
+    logger.info(`Created ${skill}`);
+  }
 }
 
 /** Creates the default `wiki/` dir with a placeholder Markdown file. */

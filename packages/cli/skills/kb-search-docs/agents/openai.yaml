@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB Search Docs"
+  short_description: "Search the local wiki before answering project questions"
+  default_prompt: "Use $kb-search-docs to search the local wiki and answer with file and line citations."
