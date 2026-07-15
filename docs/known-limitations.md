@@ -8,8 +8,8 @@
 
 ### 现象
 
-对**中文**查询，FTS5 全文检索往往无法命中，结果通常只来自向量检索（`source = vector`）。
-对英文、以及本身以空格/标点分隔的查询（如代码标识符 `searchKnowledgeBase`），FTS 表现正常，能命中 `fts` 甚至 `vector+fts`。
+对**中文**查询，FTS5 全文检索往往无法命中。默认配置已关闭无真实语义能力的确定性向量，因此这类查询会明确返回无结果，而不会用随机近邻填充结果。
+对英文、以及本身以空格/标点分隔的查询（如代码标识符 `searchKnowledgeBase`），FTS 表现正常，通常能命中 `fts`。
 
 ### 根因
 
@@ -20,11 +20,11 @@
   ```
 - `unicode61` 按空格与 Unicode 标点切分 token，**中文没有词边界**，整段中文常被当作单个 token，导致 MATCH 命中率极低。
 - 这一点在参考系统的 `技术文档.md` 中也已明确指出：「切片策略与分词未针对中文优化……真正稳定可依赖的是 FTS（对英文/分词内容）」。
-- 此外，含特殊字符的查询（如 `P&L`）会直接触发 FTS5 语法错误；当前实现已做**优雅降级**——FTS 失败时保留向量结果并在返回中带 `warning`，前端/CLI 也会提示用户拆分特殊字符或换词。
+- 此外，含特殊字符的查询（如 `P&L`）会直接触发 FTS5 语法错误；当前实现会返回空结果及 `warning`，前端/CLI 会提示用户拆分特殊字符或换词。如果显式启用了实验性向量，已有向量结果仍会保留。
 
 ### 现状下的影响
 
-混合检索仍可用，但中文查询的语义召回主要依赖向量（而当前向量是**确定性 fake embedding**，无真实语义价值）。因此中文场景下的整体检索质量有限。
+中文场景下的召回能力有限，但系统不会再把确定性 fake embedding 的近邻包装成可靠搜索结果。实验性向量只能通过 `kb.embedding.enabled: true` 显式开启，接入真实 embedding 前不建议在生产环境启用。
 
 ### 改进方向（未实现）
 
@@ -33,16 +33,18 @@
 
 ---
 
-## 2. `serve --prod` 生产模式下向量检索会降级为 FTS-only
+## 2. 实验性向量及 `serve --prod` 降级
 
 ### 现象
 
 | 模式 | 命令 | 向量检索 | 说明 |
 |---|---|---|---|
-| 开发模式（默认） | `llm-wiki-cli serve` | ✅ 可用 | Next dev server 进程内加载 sqlite-vec 成功 |
+| 默认配置 | `llm-wiki-cli serve` | 关闭 | `kb.embedding.enabled` 默认为 `false`，仅使用 FTS |
+| 开发模式（显式启用） | `llm-wiki-cli serve` | ⚠️ 实验性 | sqlite-vec 可用，但内置 embedding 无真实语义 |
 | 生产模式 | `llm-wiki-cli serve --prod` | ⚠️ 降级为 FTS-only | 原生扩展在生产打包进程内加载失败 |
 
-- dev 模式下 `GET /api/kb/stats` 返回 `vectorEnabled: true`、向量计数正确。
+- 默认配置下搜索结果返回 `vectorEnabled: false`，不会生成或查询向量。
+- 显式启用后，dev 模式下 `GET /api/kb/stats` 可返回 `vectorEnabled: true`。
 - `--prod` 模式下返回 `vectorEnabled: false`、`vectorRecords: 0`，搜索只走 FTS。
 - **磁盘上的向量数据仍然存在**（CLI 的 `index` 已写入 `vec_chunks` 表，可被独立加载读取），只是 Web 生产进程在运行期无法加载 `sqlite-vec` 扩展。
 
@@ -62,9 +64,9 @@
 
 ### 现状下的影响
 
-系统**始终可用**：这是设计阶段就预留的「向量优雅降级」机制——加载失败时 `openDatabase` 仅发出 warning、置 `vectorEnabled = false`，`indexer`/`search` 全部跳过向量分支，检索退化为纯 FTS，不会抛错。
-- 日常开发与检索以 `serve`（dev）为主，向量功能正常。
-- `--prod` 下若需向量，可单独验证扩展加载环境。
+系统**始终可用**：向量默认关闭；显式启用但加载失败时，`openDatabase` 仅发出 warning、置 `vectorEnabled = false`，检索退化为纯 FTS。
+- 日常开发与检索保持默认的 FTS-only 配置。
+- 只有验证 sqlite-vec 集成或替换为真实 embedding 后，才建议启用向量。
 
 ### 改进方向（未实现）
 

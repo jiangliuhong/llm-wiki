@@ -17,9 +17,7 @@ export function makeIndexCommand(): Command {
   command
     .description("Index wiki/ content into the local knowledge base (.llm-wiki/index.db)")
     .option("--reset", "Wipe the existing index before re-indexing everything", false)
-    .action((options: IndexOptions) => {
-      void runIndex(options);
-    });
+    .action((options: IndexOptions) => runIndex(options));
 
   return command;
 }
@@ -54,7 +52,9 @@ async function runIndex(options: IndexOptions): Promise<void> {
     `Scanned ${stats.scanned}  Added ${stats.added}  Updated ${stats.updated}  ` +
       `Skipped ${stats.skipped}  Deleted ${stats.deleted}  Chunks ${stats.chunks}`,
   );
-  if (!stats.vectorEnabled) {
+  if (!kbConfig.embedding.enabled) {
+    logger.info("Vector indexing is disabled by configuration; FTS indexing is active.");
+  } else if (!stats.vectorEnabled) {
     logger.warn("Vector search disabled (sqlite-vec unavailable); only FTS is indexed.");
   }
 }

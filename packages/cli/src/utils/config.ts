@@ -75,6 +75,12 @@ function assertKb(value: unknown): void {
       throw new ConfigError(`Invalid config: "kb.embedding" must be an object.`, "ESHAPE");
     }
     const embedding = kb.embedding as Record<string, unknown>;
+    if (embedding.enabled !== undefined && typeof embedding.enabled !== "boolean") {
+      throw new ConfigError(
+        `Invalid config: "kb.embedding.enabled" must be a boolean.`,
+        "ESHAPE",
+      );
+    }
     if (embedding.dimensions !== undefined) {
       assertPositiveInt(embedding.dimensions, "kb.embedding.dimensions");
     }
@@ -163,6 +169,7 @@ function mergeKb(partial: WikiConfig["kb"]): NonNullable<WikiConfig["kb"]> {
       overlap: partial.chunk?.overlap ?? base.chunk.overlap,
     },
     embedding: {
+      enabled: partial.embedding?.enabled ?? base.embedding.enabled,
       dimensions: partial.embedding?.dimensions ?? base.embedding.dimensions,
     },
   };

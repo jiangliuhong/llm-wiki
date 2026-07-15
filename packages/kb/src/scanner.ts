@@ -47,6 +47,13 @@ export interface ScannedFile {
   language: string;
 }
 
+/** Detailed scan outcome used by the indexer to make stale cleanup safe. */
+export interface ScanResult {
+  files: ScannedFile[];
+  /** Include roots whose contents could not be scanned completely. */
+  unavailableRoots: string[];
+}
+
 /** Lowercased extension set for O(1) membership checks. */
 const SUPPORTED_EXT_SET = new Set<string>(SUPPORTED_EXTENSIONS);
 
@@ -84,20 +91,40 @@ export function languageFromExtension(ext: string): string {
  * except where the whole directory is one of the configured include roots.
  */
 export function scanFiles(options: ScanOptions): ScannedFile[] {
+  return scanFilesDetailed(options).files;
+}
+
+/**
+ * Scans files and reports roots that were missing or only partially readable.
+ * Callers performing destructive stale cleanup should skip that cleanup when
+ * this list is non-empty, because an unavailable tree is not evidence that its
+ * previously indexed files were deleted.
+ */
+export function scanFilesDetailed(options: ScanOptions): ScanResult {
   const excludeSet = new Set(options.exclude);
   const results: ScannedFile[] = [];
+  const unavailableRoots: string[] = [];
 
   for (const root of options.include) {
     const absRoot = nodePath.resolve(options.projectRoot, root);
-    if (!nodeFs.existsSync(absRoot) || !nodeFs.statSync(absRoot).isDirectory()) {
+    let isDirectory = false;
+    try {
+      isDirectory = nodeFs.statSync(absRoot).isDirectory();
+    } catch {
+      // Missing and inaccessible roots are both unsafe for stale cleanup.
+    }
+    if (!isDirectory) {
+      unavailableRoots.push(root);
       continue;
     }
-    walk(absRoot, options.projectRoot, excludeSet, results);
+    if (!walk(absRoot, options.projectRoot, excludeSet, results)) {
+      unavailableRoots.push(root);
+    }
   }
 
   // Stable, deterministic order for reproducible indexes.
   results.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
-  return results;
+  return { files: results, unavailableRoots };
 }
 
 function walk(
@@ -105,13 +132,15 @@ function walk(
   projectRoot: string,
   excludeSet: Set<string>,
   out: ScannedFile[],
-): void {
+): boolean {
   let entries: nodeFs.Dirent[];
   try {
     entries = nodeFs.readdirSync(dirAbs, { withFileTypes: true });
   } catch {
-    return; // unreadable directory — skip
+    return false;
   }
+
+  let complete = true;
 
   for (const entry of entries) {
     const name = entry.name;
@@ -127,7 +156,9 @@ function walk(
 
     const abs = nodePath.join(dirAbs, name);
     if (entry.isDirectory()) {
-      walk(abs, projectRoot, excludeSet, out);
+      if (!walk(abs, projectRoot, excludeSet, out)) {
+        complete = false;
+      }
       continue;
     }
     if (!entry.isFile()) {
@@ -145,6 +176,7 @@ function walk(
       language: languageFromExtension(ext),
     });
   }
+  return complete;
 }
 
 /** Normalizes a path to forward-slash POSIX style. */

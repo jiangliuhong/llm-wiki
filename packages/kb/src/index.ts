@@ -43,14 +43,21 @@ export { ensureKbDir, initSchema } from "./db/init.js";
 // Scanning / chunking / embedding
 export {
   scanFiles,
+  scanFilesDetailed,
   languageFromExtension,
   SUPPORTED_EXTENSIONS,
   type ScannedFile,
+  type ScanResult,
 } from "./scanner.js";
 export { splitIntoChunks, type Chunk, type ChunkOptions } from "./chunker.js";
 export { generateEmbedding, float32ToBytes } from "./embedding.js";
 
 // Indexing / search / reading
 export { indexFiles, type IndexRunOptions } from "./indexer.js";
-export { searchKnowledgeBase, DEFAULT_SEARCH_LIMIT, type SearchRunOptions } from "./search.js";
+export {
+  searchKnowledgeBase,
+  DEFAULT_SEARCH_LIMIT,
+  MAX_SEARCH_LIMIT,
+  type SearchRunOptions,
+} from "./search.js";
 export { getKbStats, listFiles, getFileDetail, getFileContent, getChunkDetail } from "./reader.js";

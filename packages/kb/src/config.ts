@@ -17,6 +17,7 @@ export const DEFAULT_KB_CONFIG: Readonly<KbConfig> = {
     overlap: 200,
   },
   embedding: {
+    enabled: false,
     dimensions: 1536,
   },
 };
@@ -63,6 +64,9 @@ export function assertKbConfig(value: unknown): asserts value is KbConfig {
       throw new Error('Invalid kb config: "embedding" must be an object.');
     }
     const embedding = record.embedding as Record<string, unknown>;
+    if (embedding.enabled !== undefined && typeof embedding.enabled !== "boolean") {
+      throw new Error('Invalid kb config: "embedding.enabled" must be a boolean.');
+    }
     if (embedding.dimensions !== undefined) {
       assertPositiveInt(embedding.dimensions, "embedding.dimensions");
     }
@@ -89,6 +93,7 @@ export function mergeKbConfig(partial: unknown): KbConfig {
       overlap: p.chunk?.overlap ?? base.chunk.overlap,
     },
     embedding: {
+      enabled: p.embedding?.enabled ?? base.embedding.enabled,
       dimensions: p.embedding?.dimensions ?? base.embedding.dimensions,
     },
   };

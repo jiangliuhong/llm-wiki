@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { searchKnowledgeBase } from "@llm-wiki/kb";
+import { MAX_SEARCH_LIMIT, searchKnowledgeBase } from "@llm-wiki/kb";
 import { loadConfig, ConfigError } from "../utils/config.js";
 import { resolveKbConfig } from "../utils/kb-config.js";
 import { logger } from "../utils/logger.js";
@@ -18,9 +18,7 @@ export function makeSearchCommand(): Command {
     .argument("<query>", "Search query")
     .option("-l, --limit <n>", "Max results", (value: string) => parseLimit(value), 8)
     .option("--json", "Output results as JSON", false)
-    .action((query: string, options: SearchOptions) => {
-      void runSearch(query, options);
-    });
+    .action((query: string, options: SearchOptions) => runSearch(query, options));
 
   return command;
 }
@@ -31,6 +29,10 @@ interface SearchOptions {
 }
 
 async function runSearch(query: string, options: SearchOptions): Promise<void> {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length === 0) {
+    throw new Error("Search query must not be empty.");
+  }
   let config;
   try {
     config = loadConfig();
@@ -44,8 +46,9 @@ async function runSearch(query: string, options: SearchOptions): Promise<void> {
   }
 
   const kbConfig = resolveKbConfig(config);
-  const result = searchKnowledgeBase(query, {
+  const result = searchKnowledgeBase(normalizedQuery, {
     dimensions: kbConfig.embedding.dimensions,
+    enableVector: kbConfig.embedding.enabled,
     limit: options.limit,
   });
 
@@ -58,7 +61,7 @@ async function runSearch(query: string, options: SearchOptions): Promise<void> {
   if (result.warning) {
     logger.warn(result.warning);
   }
-  if (!result.vectorEnabled) {
+  if (kbConfig.embedding.enabled && !result.vectorEnabled) {
     logger.warn("Vector search disabled (sqlite-vec unavailable); showing FTS results only.");
   }
 
@@ -82,9 +85,16 @@ async function runSearch(query: string, options: SearchOptions): Promise<void> {
 }
 
 function parseLimit(value: string): number {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`Invalid limit "${value}". Expected a positive integer.`);
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new Error(
+      `Invalid limit "${value}". Expected an integer between 1 and ${MAX_SEARCH_LIMIT}.`,
+    );
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_SEARCH_LIMIT) {
+    throw new Error(
+      `Invalid limit "${value}". Expected an integer between 1 and ${MAX_SEARCH_LIMIT}.`,
+    );
   }
   return parsed;
 }

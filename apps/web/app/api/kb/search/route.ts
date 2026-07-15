@@ -1,12 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { searchKnowledgeBase } from "@llm-wiki/kb";
-import { loadDimensions } from "../../_lib/kb-config";
+import { MAX_SEARCH_LIMIT, searchKnowledgeBase } from "@llm-wiki/kb";
+import { loadEmbeddingConfig } from "../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_LIMIT = 8;
-const MAX_LIMIT = 50;
 
 /**
  * GET /api/kb/search?q=<query>&limit=<n>
@@ -25,18 +24,29 @@ export async function GET(request: NextRequest): Promise<Response> {
   const limitParam = request.nextUrl.searchParams.get("limit");
   let limit = DEFAULT_LIMIT;
   if (limitParam !== null) {
-    const parsed = Number.parseInt(limitParam, 10);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
+    if (!/^[1-9]\d*$/.test(limitParam)) {
       return NextResponse.json(
-        { error: "'limit' must be a positive integer." },
+        { error: `'limit' must be an integer between 1 and ${MAX_SEARCH_LIMIT}.` },
         { status: 400 },
       );
     }
-    limit = Math.min(parsed, MAX_LIMIT);
+    const parsed = Number(limitParam);
+    if (!Number.isSafeInteger(parsed) || parsed > MAX_SEARCH_LIMIT) {
+      return NextResponse.json(
+        { error: `'limit' must be an integer between 1 and ${MAX_SEARCH_LIMIT}.` },
+        { status: 400 },
+      );
+    }
+    limit = parsed;
   }
 
   try {
-    const result = searchKnowledgeBase(q, { dimensions: loadDimensions(), limit });
+    const embedding = loadEmbeddingConfig();
+    const result = searchKnowledgeBase(q, {
+      dimensions: embedding.dimensions,
+      enableVector: embedding.enabled,
+      limit,
+    });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

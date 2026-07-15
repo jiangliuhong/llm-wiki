@@ -23,12 +23,16 @@ import type { SearchHit, SearchResult, SearchSource } from "./types.js";
 export interface SearchRunOptions extends OpenOptions {
   /** Resolved KB config (for the embedding dimension). */
   dimensions: number;
+  /** Enable the experimental deterministic-vector retrieval leg. */
+  enableVector?: boolean;
   /** Max results to return. */
   limit?: number;
 }
 
 /** Default result cap (matches the HTTP API default). */
 export const DEFAULT_SEARCH_LIMIT = 8;
+/** Hard cap shared by CLI/API callers to keep local queries bounded. */
+export const MAX_SEARCH_LIMIT = 50;
 
 interface VectorRow {
   chunkId: number;
@@ -57,34 +61,46 @@ export function searchKnowledgeBase(
   query: string,
   options: SearchRunOptions,
 ): SearchResult {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length === 0) {
+    throw new Error("Search query must not be empty.");
+  }
   const limit = options.limit ?? DEFAULT_SEARCH_LIMIT;
-  return withReadonlyDb({ projectRoot: options.projectRoot }, (conn) => {
-    const vectorEnabled = conn.vectorEnabled;
+  if (!Number.isInteger(limit) || limit <= 0 || limit > MAX_SEARCH_LIMIT) {
+    throw new Error(`Search limit must be an integer between 1 and ${MAX_SEARCH_LIMIT}.`);
+  }
+  const enableVector = options.enableVector ?? false;
+  return withReadonlyDb(
+    { projectRoot: options.projectRoot, loadVector: enableVector },
+    (conn) => {
+      const vectorEnabled = enableVector && conn.vectorEnabled;
+      let warning: string | undefined;
 
-    // Vector leg (optional).
-    let vectorRows: VectorRow[] = [];
-    if (vectorEnabled) {
-      try {
-        vectorRows = runVectorSearch(conn.db, query, limit, options.dimensions);
-      } catch {
-        // Treat vector failures the same as disabled — fall back to FTS only.
+      // Vector leg (optional).
+      let vectorRows: VectorRow[] = [];
+      if (vectorEnabled) {
+        try {
+          vectorRows = runVectorSearch(conn.db, normalizedQuery, limit, options.dimensions);
+        } catch (err) {
+          warning = `Vector query failed (${(err as Error).message}); showing FTS results only.`;
+        }
       }
-    }
 
-    // FTS leg (with graceful degradation for malformed queries).
-    let ftsRows: FtsRow[] = [];
-    let warning: string | undefined;
-    try {
-      ftsRows = runFtsSearch(conn.db, query, limit);
-    } catch (err) {
-      warning =
-        `Full-text query failed (${(err as Error).message}); showing vector results only.` +
-        ` Try splitting special characters like "&" or rephrasing.`;
-    }
+      // FTS leg (with graceful degradation for malformed queries).
+      let ftsRows: FtsRow[] = [];
+      try {
+        ftsRows = runFtsSearch(conn.db, normalizedQuery, limit);
+      } catch (err) {
+        const ftsWarning =
+          `Full-text query failed (${(err as Error).message}).` +
+          ` Try splitting special characters like "&" or rephrasing.`;
+        warning = warning ? `${warning} ${ftsWarning}` : ftsWarning;
+      }
 
-    const hits = mergeHits(vectorRows, ftsRows, limit);
-    return { query, limit, hits, vectorEnabled, warning };
-  });
+      const hits = mergeHits(vectorRows, ftsRows, limit);
+      return { query: normalizedQuery, limit, hits, vectorEnabled, warning };
+    },
+  );
 }
 
 /** KNN search over the vec0 virtual table. */
@@ -223,7 +239,7 @@ function mergeHits(vector: VectorRow[], fts: FtsRow[], limit: number): SearchHit
 function nativeScore(hit: SearchHit): number {
   if (hit.source === "vector") return hit.distance ?? Number.POSITIVE_INFINITY;
   if (hit.source === "fts") return hit.bm25 ?? Number.POSITIVE_INFINITY;
-  // vector+fts: prefer the (closer-to-zero) bm25, then distance as tiebreak.
+  // vector+fts: use FTS relevance as the primary native score.
   return hit.bm25 ?? hit.distance ?? Number.POSITIVE_INFINITY;
 }
 

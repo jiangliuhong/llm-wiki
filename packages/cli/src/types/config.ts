@@ -11,6 +11,8 @@ export interface WikiKbChunkConfig {
 }
 
 export interface WikiKbEmbeddingConfig {
+  /** Enable the experimental deterministic-vector retrieval path. */
+  enabled: boolean;
   dimensions: number;
 }
 
@@ -40,7 +42,7 @@ export const DEFAULT_CONFIG: Readonly<WikiConfig> = {
     include: ["wiki"],
     exclude: ["node_modules", ".git", ".llm-wiki", "dist", "build", "out"],
     chunk: { maxChars: 1200, overlap: 200 },
-    embedding: { dimensions: 1536 },
+    embedding: { enabled: false, dimensions: 1536 },
   },
 };
 

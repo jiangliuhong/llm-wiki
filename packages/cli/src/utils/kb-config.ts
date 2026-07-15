@@ -18,6 +18,6 @@ export function resolveKbConfig(config: WikiConfig): KbConfig {
     include: [...kb.include],
     exclude: [...kb.exclude],
     chunk: { maxChars: kb.chunk.maxChars, overlap: kb.chunk.overlap },
-    embedding: { dimensions: kb.embedding.dimensions },
+    embedding: { enabled: kb.embedding.enabled, dimensions: kb.embedding.dimensions },
   };
 }

@@ -22,6 +22,8 @@ export interface KbConfig {
   };
   /** Embedding controls. */
   embedding: {
+    /** Enable the experimental deterministic-vector index/search path. */
+    enabled: boolean;
     /** Vector dimensionality — MUST match the `vec_chunks` table. */
     dimensions: number;
   };

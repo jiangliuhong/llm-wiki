@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import nodeFs from "node:fs";
-import { scanFiles } from "./scanner.js";
+import { scanFilesDetailed } from "./scanner.js";
 import { splitIntoChunks } from "./chunker.js";
 import { generateEmbedding, float32ToBytes } from "./embedding.js";
-import { initSchema } from "./db/init.js";
+import { ensureKbDir, initSchema } from "./db/init.js";
 import { openDatabase, closeConnection, type KbConnection } from "./db/connection.js";
 import type { KbConfig, IndexStats } from "./types.js";
 
@@ -56,9 +56,16 @@ export function indexFiles(options: IndexRunOptions): IndexStats {
   const projectRoot = options.projectRoot ?? process.cwd();
   const onProgress = options.onProgress ?? (() => {});
 
-  const conn = openDatabase({ projectRoot, loadVector: true, warn: onProgress });
+  ensureKbDir(projectRoot);
+  const conn = openDatabase({
+    projectRoot,
+    loadVector: options.config.embedding.enabled,
+    warn: onProgress,
+  });
   try {
-    initSchema(conn, options.config.embedding.dimensions);
+    initSchema(conn, options.config.embedding.dimensions, {
+      resetVector: options.reset ?? false,
+    });
     return runIndex(conn, projectRoot, options);
   } finally {
     closeConnection(conn);
@@ -71,12 +78,18 @@ function runIndex(conn: KbConnection, projectRoot: string, options: IndexRunOpti
   const reset = options.reset ?? false;
   const onProgress = options.onProgress ?? (() => {});
 
-  const scanned = scanFiles({
+  const scan = scanFilesDetailed({
     projectRoot,
     include: config.include,
     exclude: config.exclude,
   });
+  const scanned = scan.files;
   onProgress(`Scanned ${scanned.length} file(s) under ${config.include.join(", ") || "(none)"}.`);
+  if (scan.unavailableRoots.length > 0) {
+    onProgress(
+      `Warning: could not completely scan ${scan.unavailableRoots.join(", ")}; stale cleanup will be skipped.`,
+    );
+  }
 
   // Prepared statements.
   const findExisting = db.prepare<
@@ -124,6 +137,16 @@ function runIndex(conn: KbConnection, projectRoot: string, options: IndexRunOpti
       )
     : null;
   const findAllPaths = db.prepare<[], { id: number; path: string }>("SELECT id, path FROM files");
+  const hasMissingVectors = conn.vectorEnabled
+    ? db.prepare<[number], { missing: number }>(
+        `SELECT EXISTS(
+           SELECT 1
+             FROM chunks AS c
+             LEFT JOIN vec_chunks AS v ON v.rowid = c.id
+            WHERE c.file_id = ? AND v.rowid IS NULL
+         ) AS missing`,
+      )
+    : null;
 
   const stats: IndexStats = {
     scanned: scanned.length,
@@ -178,7 +201,9 @@ function runIndex(conn: KbConnection, projectRoot: string, options: IndexRunOpti
         } catch {
           skip = false;
         }
-        if (skip) {
+        const vectorsComplete =
+          !hasMissingVectors || (hasMissingVectors.get(existing.id)?.missing ?? 0) === 0;
+        if (skip && vectorsComplete) {
           stats.skipped++;
           continue;
         }
@@ -247,7 +272,7 @@ function runIndex(conn: KbConnection, projectRoot: string, options: IndexRunOpti
     }
 
     // Stale cleanup: files in DB but not on disk.
-    if (!reset) {
+    if (!reset && scan.unavailableRoots.length === 0) {
       const allRows = findAllPaths.all();
       for (const row of allRows) {
         if (!scannedPaths.has(row.path)) {

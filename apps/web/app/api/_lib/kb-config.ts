@@ -12,21 +12,37 @@ import nodePath from "node:path";
 
 interface RawKbConfig {
   kb?: {
-    embedding?: { dimensions?: number };
+    embedding?: { enabled?: boolean; dimensions?: number };
   };
 }
 
 const DEFAULT_DIMENSIONS = 1536;
 
-/** Resolves the embedding dimensionality from the local config. */
-export function loadDimensions(): number {
+export interface WebEmbeddingConfig {
+  enabled: boolean;
+  dimensions: number;
+}
+
+/** Resolves vector enablement and dimensionality from the local config. */
+export function loadEmbeddingConfig(): WebEmbeddingConfig {
   const configPath = nodePath.resolve(process.cwd(), ".llm-wiki", "config.json");
   try {
     const raw = nodeFs.readFileSync(configPath, "utf8");
     const parsed = JSON.parse(raw) as RawKbConfig;
-    const dims = parsed.kb?.embedding?.dimensions;
-    return typeof dims === "number" && dims > 0 ? dims : DEFAULT_DIMENSIONS;
+    const embedding = parsed.kb?.embedding;
+    return {
+      enabled: embedding?.enabled === true,
+      dimensions:
+        typeof embedding?.dimensions === "number" && embedding.dimensions > 0
+          ? embedding.dimensions
+          : DEFAULT_DIMENSIONS,
+    };
   } catch {
-    return DEFAULT_DIMENSIONS;
+    return { enabled: false, dimensions: DEFAULT_DIMENSIONS };
   }
+}
+
+/** Resolves the embedding dimensionality from the local config. */
+export function loadDimensions(): number {
+  return loadEmbeddingConfig().dimensions;
 }

@@ -1,6 +1,6 @@
 # llm-wiki-cli
 
-一个本地知识库 Wiki 平台的命令行工具：扫描文档 → 切片 → 嵌入 → 索引（SQLite FTS5 + sqlite-vec 向量）→ 混合检索，并通过一个命令把检索网页跑起来。
+一个本地知识库 Wiki 平台的命令行工具：扫描文档 → 切片 → SQLite FTS5 索引 → 本地检索，并通过一个命令把检索网页跑起来。实验性的 sqlite-vec 向量路径可按需启用。
 
 所有数据都存在本地（`.llm-wiki/` 目录下的 `index.db`），不上传任何外部服务。
 
@@ -23,6 +23,8 @@
 ## 使用指南
 
 面向**使用 CLI 管理知识库与启动检索网页**的用户。
+
+完整的命令参数、脚本调用方式和故障排查请参阅 [`docs/cli-usage.md`](./docs/cli-usage.md)。
 
 ## 环境要求
 
@@ -96,7 +98,7 @@ llm-wiki-cli init [--title <标题>] [--port <端口>]
     "include": ["wiki"],
     "exclude": ["node_modules", ".git", ".llm-wiki", "dist", "build", "out"],
     "chunk": { "maxChars": 1200, "overlap": 200 },
-    "embedding": { "dimensions": 1536 }
+    "embedding": { "enabled": false, "dimensions": 1536 }
   }
 }
 ```
@@ -120,18 +122,16 @@ llm-wiki-cli index [--reset]
 llm-wiki-cli search <query> [--limit <n>] [--json]
 ```
 
-- `-l, --limit <n>`：最大返回数，默认 `8`。
+- `-l, --limit <n>`：最大返回数，默认 `8`，范围 `1` 到 `50`。
 - `--json`：以 JSON 输出，便于脚本/管道消费。
 
-检索为**混合检索**：向量（KNN）+ 全文（FTS5 bm25）合并，结果按来源分桶排序：
-`vector+fts`（两者都命中）> `fts` > `vector`，桶内再按各自原生分数排序。
+默认检索使用 FTS5 bm25。内置向量是确定性测试实现，不具备真实语义能力，因此默认关闭；显式设置 `kb.embedding.enabled: true` 后才启用向量 KNN，并按 `vector+fts` > `fts` > `vector` 分桶排序。
 
 示例输出：
 
 ```
-wiki/技术文档.md:42-58  [vector+fts]
+wiki/技术文档.md:42-58  [fts]
   预览文本片段……
-  distance: 0.1234
   bm25: -3.2100
 ```
 
@@ -167,6 +167,7 @@ llm-wiki-cli serve [-p, --port <端口>] [--prod]
 | `kb.exclude` | string[] | 见上 | 扫描时跳过的目录名 |
 | `kb.chunk.maxChars` | number | `1200` | 每个块最大字符数 |
 | `kb.chunk.overlap` | number | `200` | 相邻块重叠字符数 |
+| `kb.embedding.enabled` | boolean | `false` | 是否启用实验性确定性向量检索 |
 | `kb.embedding.dimensions` | number | `1536` | 向量维度（必须与索引库 schema 一致） |
 
 > `kb` 整段可选：旧版只有 `title`/`port` 的配置仍然有效，缺失字段会自动补默认值。
@@ -175,8 +176,8 @@ llm-wiki-cli serve [-p, --port <端口>] [--prod]
 
 详见 [`docs/known-limitations.md`](./docs/known-limitations.md)。摘要：
 
-1. **中文 FTS 偏弱**：FTS5 默认分词器对中文无词界，中文查询往往只命中向量；英文/分词内容 FTS 正常。含特殊字符（如 `P&L`）会触发降级并返回 `warning`。
-2. **`serve --prod` 向量会降级**：Next 16 生产进程内原生扩展加载失败时，自动退化为 FTS-only（磁盘向量仍保留）；开发模式 `serve` 向量正常。
+1. **中文 FTS 偏弱**：FTS5 默认分词器对中文无词界，中文查询可能无结果；英文/分词内容 FTS 正常。含特殊字符（如 `P&L`）会返回 `warning`。
+2. **实验性向量限制**：内置确定性向量没有真实语义，默认关闭；显式启用后，`serve --prod` 仍可能因原生扩展加载失败而降级。
 
 ---
 
@@ -295,7 +296,7 @@ pnpm --filter @llm-wiki/cli dev -- serve
 ## 调试与验证建议
 
 - **原生模块编译失败**：确保本机有 Python 与 C++ 编译工具链；macOS 一般有预编译产物，Linux/Windows 可能需源码编译。
-- **检索无结果**：先用 `llm-wiki-cli search <query> --json` 查看返回结构与 `vectorEnabled` 标志；中文查询多见于 FTS 不命中、仅向量召回（属已知限制）。
+- **检索无结果**：先用 `llm-wiki-cli search <query> --json` 查看返回结构；中文查询可能因默认 FTS 分词限制而无法命中。
 - **端口占用**：`serve` 遇 `EADDRINUSE` 会给出友好提示，换端口 `--port` 即可。
 
 ## 许可证
