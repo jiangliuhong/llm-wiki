@@ -20,6 +20,11 @@ import type { Database } from "better-sqlite3";
  */
 export function applyBaseSchema(db: Database): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS files (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       path        TEXT NOT NULL UNIQUE,
@@ -41,9 +46,122 @@ export function applyBaseSchema(db: Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
 
+    CREATE TABLE IF NOT EXISTS documents (
+      file_id          INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+      title            TEXT NOT NULL,
+      slug             TEXT NOT NULL,
+      summary          TEXT,
+      body             TEXT NOT NULL,
+      body_start_line  INTEGER NOT NULL DEFAULT 1,
+      metadata_json    TEXT NOT NULL DEFAULT '{}'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
+    CREATE INDEX IF NOT EXISTS idx_documents_title ON documents(title);
+
+    CREATE TABLE IF NOT EXISTS document_sections (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      heading     TEXT NOT NULL,
+      slug        TEXT NOT NULL,
+      level       INTEGER NOT NULL,
+      start_line  INTEGER NOT NULL,
+      UNIQUE(file_id, slug, start_line)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sections_file_id ON document_sections(file_id);
+
+    CREATE TABLE IF NOT EXISTS relation_types (
+      name           TEXT PRIMARY KEY,
+      display_name   TEXT NOT NULL,
+      inverse_name   TEXT,
+      symmetric      INTEGER NOT NULL DEFAULT 0 CHECK (symmetric IN (0, 1)),
+      core           INTEGER NOT NULL DEFAULT 0 CHECK (core IN (0, 1))
+    );
+
+    CREATE TABLE IF NOT EXISTS document_relations (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_file_id  INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      target_file_id  INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      relation_type   TEXT NOT NULL REFERENCES relation_types(name),
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL,
+      UNIQUE(source_file_id, target_file_id, relation_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_relations_source ON document_relations(source_file_id);
+    CREATE INDEX IF NOT EXISTS idx_relations_target ON document_relations(target_file_id);
+
+    CREATE TABLE IF NOT EXISTS relation_evidence (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      relation_id      INTEGER NOT NULL REFERENCES document_relations(id) ON DELETE CASCADE,
+      source_kind      TEXT NOT NULL CHECK (source_kind IN ('frontmatter','markdown_link','wikilink','agent')),
+      original_target  TEXT NOT NULL,
+      source_path      TEXT NOT NULL,
+      start_line       INTEGER,
+      end_line         INTEGER,
+      evidence_text    TEXT,
+      rationale        TEXT,
+      confidence       REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+      UNIQUE(relation_id, source_kind, source_path, start_line, original_target)
+    );
+
+    CREATE TABLE IF NOT EXISTS relation_proposals (
+      id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_file_id        INTEGER REFERENCES files(id) ON DELETE SET NULL,
+      target_file_id        INTEGER REFERENCES files(id) ON DELETE SET NULL,
+      source_path           TEXT NOT NULL,
+      target_path           TEXT NOT NULL,
+      relation_type         TEXT NOT NULL,
+      confidence            REAL NOT NULL CHECK (confidence > 0 AND confidence <= 1),
+      rationale             TEXT NOT NULL,
+      evidence_path         TEXT NOT NULL,
+      evidence_start_line   INTEGER NOT NULL,
+      evidence_end_line     INTEGER NOT NULL,
+      evidence_text         TEXT,
+      status                TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','invalid')),
+      created_at            TEXT NOT NULL,
+      reviewed_at           TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_relation_proposals_status ON relation_proposals(status);
+
+    CREATE TABLE IF NOT EXISTS unresolved_relation_refs (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      relation_type    TEXT NOT NULL,
+      source_kind      TEXT NOT NULL,
+      original_target  TEXT NOT NULL,
+      source_path      TEXT NOT NULL,
+      start_line       INTEGER,
+      reason           TEXT NOT NULL,
+      UNIQUE(source_file_id, relation_type, source_kind, original_target, start_line)
+    );
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id    INTEGER PRIMARY KEY AUTOINCREMENT,
+      name  TEXT NOT NULL UNIQUE
+    );
+
+    CREATE TABLE IF NOT EXISTS document_tags (
+      file_id  INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+      PRIMARY KEY(file_id, tag_id)
+    );
+
     -- External-content FTS5 table: indexes chunks.content, keyed by chunks.id.
     CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
     USING fts5(content, content='chunks', content_rowid='id');
+
+    INSERT INTO schema_meta(key, value) VALUES ('schema_version', '2')
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+
+    INSERT OR IGNORE INTO relation_types(name, display_name, inverse_name, symmetric, core) VALUES
+      ('references', 'references', 'referenced_by', 0, 1),
+      ('depends_on', 'depends_on', 'dependency_of', 0, 1),
+      ('implements', 'implements', 'implemented_by', 0, 1),
+      ('extends', 'extends', 'extended_by', 0, 1),
+      ('related_to', 'related_to', 'related_to', 1, 1);
   `);
 }
 
@@ -71,4 +189,6 @@ export const TABLE_NAMES = {
   chunks: "chunks",
   fts: "chunks_fts",
   vec: "vec_chunks",
+  documents: "documents",
+  relations: "document_relations",
 } as const;

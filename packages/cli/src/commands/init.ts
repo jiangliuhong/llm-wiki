@@ -71,7 +71,7 @@ function runInit(options: InitOptions): void {
   logger.info(`Next: add files to wiki/ and run "llm-wiki-cli index".`);
 }
 
-const BUNDLED_SKILLS = ["kb-write-docs", "kb-search-docs"] as const;
+const BUNDLED_SKILLS = ["kb-write-docs", "kb-search-docs", "kb-infer-relations"] as const;
 
 /** Installs missing bundled skills without changing user-customized copies. */
 function createSkills(): string[] {

@@ -61,6 +61,12 @@ export default function TopNav({ title }: { title: string }): React.ReactElement
           Search
         </Button>
       </form>
+      <a
+        href="/relations/review"
+        className="hidden shrink-0 text-xs font-semibold text-slate-500 hover:text-indigo-700 sm:block"
+      >
+        Review relations
+      </a>
     </header>
   );
 }

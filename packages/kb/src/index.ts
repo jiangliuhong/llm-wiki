@@ -23,6 +23,17 @@ export type {
   SearchResult,
   ListFilesOptions,
   KbFileListPage,
+  RelationDirection,
+  RelationSourceKind,
+  RelationProposalStatus,
+  RelationTypeDefinition,
+  RelationEvidence,
+  DocumentRelation,
+  DocumentGraphNode,
+  DocumentNeighborhood,
+  RelationProposal,
+  RelationDiagnostic,
+  GraphSearchContext,
 } from "./types.js";
 
 // Config
@@ -61,3 +72,16 @@ export {
   type SearchRunOptions,
 } from "./search.js";
 export { getKbStats, listFiles, getFileDetail, getFileContent, getChunkDetail } from "./reader.js";
+export {
+  getDocumentRelations,
+  getDocumentNeighborhood,
+  createRelationProposals,
+  listRelationProposals,
+  approveRelationProposal,
+  rejectRelationProposal,
+  listRelationDiagnostics,
+  getGraphSearchContext,
+  type GetRelationsOptions,
+  type RelationProposalInput,
+  type RelationProposalFile,
+} from "./graph.js";

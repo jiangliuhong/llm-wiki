@@ -22,6 +22,11 @@ import "./globals.css";
  */
 const wikiTitle = process.env.NEXT_PUBLIC_WIKI_TITLE ?? "LLM Wiki";
 
+// The CLI injects the Wiki title at server startup. Keep the shell dynamic so
+// routes such as the client-rendered relation review page do not freeze the
+// build-time fallback title into their prerendered HTML.
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: wikiTitle,
   description: "Local AI Wiki Platform — powered by Next.js and HeroUI.",

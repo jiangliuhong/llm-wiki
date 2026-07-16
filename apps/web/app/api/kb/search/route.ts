@@ -15,10 +15,7 @@ const DEFAULT_LIMIT = 8;
 export async function GET(request: NextRequest): Promise<Response> {
   const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
   if (q.length === 0) {
-    return NextResponse.json(
-      { error: "Missing required query parameter 'q'." },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Missing required query parameter 'q'." }, { status: 400 });
   }
 
   const limitParam = request.nextUrl.searchParams.get("limit");
@@ -46,6 +43,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       dimensions: embedding.dimensions,
       enableVector: embedding.enabled,
       limit,
+      graph: { enabled: true, perSeedLimit: 3 },
     });
     return NextResponse.json(result);
   } catch (err) {

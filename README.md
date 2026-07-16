@@ -6,17 +6,17 @@
 
 ## 技术栈
 
-| 关注点 | 选型 |
-| --- | --- |
-| 运行时 | Node.js 22+ |
-| 语言 | TypeScript（strict、ESM） |
-| CLI 框架 | Commander.js |
-| Web 框架 | Next.js 16（App Router） |
-| UI 库 | HeroUI v3 |
-| 样式 | Tailwind CSS v4（CSS-first 配置） |
+| 关注点   | 选型                                       |
+| -------- | ------------------------------------------ |
+| 运行时   | Node.js 22+                                |
+| 语言     | TypeScript（strict、ESM）                  |
+| CLI 框架 | Commander.js                               |
+| Web 框架 | Next.js 16（App Router）                   |
+| UI 库    | HeroUI v3                                  |
+| 样式     | Tailwind CSS v4（CSS-first 配置）          |
 | 检索存储 | better-sqlite3 + sqlite-vec（FTS5 + 向量） |
-| Monorepo | pnpm workspace |
-| 代码规范 | ESLint（flat config）+ Prettier |
+| Monorepo | pnpm workspace                             |
+| 代码规范 | ESLint（flat config）+ Prettier            |
 
 ---
 
@@ -66,6 +66,8 @@ llm-wiki-cli init        # 初始化：写配置 + 建 wiki/ 目录 + 安装项�
 # 把你的文档放进 wiki/（Markdown、代码、文本等均可）
 llm-wiki-cli index       # 索引：扫描 → 切片 → 嵌入 → 入库
 llm-wiki-cli search "你的查询词"   # 命令行检索
+llm-wiki-cli search "你的查询词" --graph # 同时返回一跳关联文档
+llm-wiki-cli relations list       # 审核 Agent 提出的关系候选
 llm-wiki-cli serve       # 启动网页，浏览器打开检索页
 ```
 
@@ -76,12 +78,13 @@ llm-wiki-cli --help
 llm-wiki-cli init [options]
 llm-wiki-cli index [options]
 llm-wiki-cli search <query> [options]
+llm-wiki-cli relations <command>
 llm-wiki-cli serve [options]
 ```
 
 ### `init` — 初始化知识库
 
-在当前工作目录创建 `.llm-wiki/config.json`、`wiki/` 内容目录（含一个占位 `welcome.md`），并在 `.agents/skills/` 安装 `kb-write-docs` 与 `kb-search-docs`。
+在当前工作目录创建 `.llm-wiki/config.json`、`wiki/` 内容目录（含一个占位 `welcome.md`），并在 `.agents/skills/` 安装 `kb-write-docs`、`kb-search-docs` 与 `kb-infer-relations`。
 若配置或同名 skill 已存在，命令会保留已有内容；再次执行可补装缺失的内置 skill。
 
 ```bash
@@ -119,13 +122,15 @@ llm-wiki-cli index [--reset]
 ### `search` — 命令行检索
 
 ```bash
-llm-wiki-cli search <query> [--limit <n>] [--json]
+llm-wiki-cli search <query> [--limit <n>] [--json] [--graph]
 ```
 
 - `-l, --limit <n>`：最大返回数，默认 `8`，范围 `1` 到 `50`。
 - `--json`：以 JSON 输出，便于脚本/管道消费。
 
 默认检索使用 FTS5 bm25。内置向量是确定性测试实现，不具备真实语义能力，因此默认关闭；显式设置 `kb.embedding.enabled: true` 后才启用向量 KNN，并按 `vector+fts` > `fts` > `vector` 分桶排序。
+
+加 `--graph` 后，命令还会从文本命中的文档出发，返回最多一跳的已发布文档关系。Web 搜索默认启用这一扩展，但关联文档与文本命中分开展示。
 
 示例输出：
 
@@ -134,6 +139,32 @@ wiki/技术文档.md:42-58  [fts]
   预览文本片段……
   bm25: -3.2100
 ```
+
+### 文档关系与知识图谱
+
+Markdown 文档可用 frontmatter 声明类型化关系，也可通过普通本地链接或 `[[WikiLink]]` 自动生成 `references`。关系、证据、标签、候选审核状态仍保存在 `.llm-wiki/index.db`；索引过程不调用 LLM。
+
+```yaml
+---
+title: 索引架构
+tags: [搜索, SQLite]
+relations:
+  - type: depends_on
+    target: ./storage.md
+---
+```
+
+内置 `kb-infer-relations` skill 可指导调用方 Agent 生成带证据的候选 JSON。候选必须通过 Web 的 `/relations/review` 或 CLI 审核后才进入正式图谱：
+
+```bash
+llm-wiki-cli relations propose --input proposals.json
+llm-wiki-cli relations list --status pending
+llm-wiki-cli relations approve 1
+llm-wiki-cli relations reject 2
+llm-wiki-cli relations diagnostics
+```
+
+完整格式、解析规则和审核流程见 [`docs/wiki-graph.md`](./docs/wiki-graph.md)。
 
 ### `serve` — 启动检索网页
 
@@ -159,16 +190,16 @@ llm-wiki-cli serve [-p, --port <端口>] [--prod]
 
 位置：`.llm-wiki/config.json`（相对当前工作目录）。字段说明：
 
-| 字段 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `title` | string | `"My Wiki"` | 网页标题 |
-| `port` | number | `3000` | serve 端口（0–65535） |
-| `kb.include` | string[] | `["wiki"]` | 递归扫描的目录 |
-| `kb.exclude` | string[] | 见上 | 扫描时跳过的目录名 |
-| `kb.chunk.maxChars` | number | `1200` | 每个块最大字符数 |
-| `kb.chunk.overlap` | number | `200` | 相邻块重叠字符数 |
-| `kb.embedding.enabled` | boolean | `false` | 是否启用实验性确定性向量检索 |
-| `kb.embedding.dimensions` | number | `1536` | 向量维度（必须与索引库 schema 一致） |
+| 字段                      | 类型     | 默认值      | 说明                                 |
+| ------------------------- | -------- | ----------- | ------------------------------------ |
+| `title`                   | string   | `"My Wiki"` | 网页标题                             |
+| `port`                    | number   | `3000`      | serve 端口（0–65535）                |
+| `kb.include`              | string[] | `["wiki"]`  | 递归扫描的目录                       |
+| `kb.exclude`              | string[] | 见上        | 扫描时跳过的目录名                   |
+| `kb.chunk.maxChars`       | number   | `1200`      | 每个块最大字符数                     |
+| `kb.chunk.overlap`        | number   | `200`       | 相邻块重叠字符数                     |
+| `kb.embedding.enabled`    | boolean  | `false`     | 是否启用实验性确定性向量检索         |
+| `kb.embedding.dimensions` | number   | `1536`      | 向量维度（必须与索引库 schema 一致） |
 
 > `kb` 整段可选：旧版只有 `title`/`port` 的配置仍然有效，缺失字段会自动补默认值。
 

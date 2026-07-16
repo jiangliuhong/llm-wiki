@@ -4,6 +4,7 @@ import { makeInitCommand } from "./commands/init.js";
 import { makeServeCommand } from "./commands/serve.js";
 import { makeIndexCommand } from "./commands/index.js";
 import { makeSearchCommand } from "./commands/search.js";
+import { makeRelationsCommand } from "./commands/relations.js";
 import { logger } from "./utils/logger.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -46,6 +47,7 @@ program
 program.addCommand(makeInitCommand());
 program.addCommand(makeIndexCommand());
 program.addCommand(makeSearchCommand());
+program.addCommand(makeRelationsCommand());
 program.addCommand(makeServeCommand());
 
 // Friendly top-level error handling so we never dump an unhandled rejection.

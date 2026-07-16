@@ -2,6 +2,7 @@ import type { Database as DatabaseType } from "better-sqlite3";
 import { withReadonlyDb, type OpenOptions } from "./db/connection.js";
 import { generateEmbedding, float32ToBytes } from "./embedding.js";
 import type { SearchHit, SearchResult, SearchSource } from "./types.js";
+import { getGraphSearchContext } from "./graph.js";
 
 /**
  * Hybrid retrieval.
@@ -27,6 +28,8 @@ export interface SearchRunOptions extends OpenOptions {
   enableVector?: boolean;
   /** Max results to return. */
   limit?: number;
+  /** Expand top result documents through approved one-hop relations. */
+  graph?: boolean | { enabled?: boolean; perSeedLimit?: number };
 }
 
 /** Default result cap (matches the HTTP API default). */
@@ -57,10 +60,7 @@ interface FtsRow {
 /**
  * Runs a hybrid search. Opens a read-only DB connection.
  */
-export function searchKnowledgeBase(
-  query: string,
-  options: SearchRunOptions,
-): SearchResult {
+export function searchKnowledgeBase(query: string, options: SearchRunOptions): SearchResult {
   const normalizedQuery = query.trim();
   if (normalizedQuery.length === 0) {
     throw new Error("Search query must not be empty.");
@@ -70,7 +70,7 @@ export function searchKnowledgeBase(
     throw new Error(`Search limit must be an integer between 1 and ${MAX_SEARCH_LIMIT}.`);
   }
   const enableVector = options.enableVector ?? false;
-  return withReadonlyDb(
+  const result: SearchResult = withReadonlyDb(
     { projectRoot: options.projectRoot, loadVector: enableVector },
     (conn) => {
       const vectorEnabled = enableVector && conn.vectorEnabled;
@@ -101,6 +101,18 @@ export function searchKnowledgeBase(
       return { query: normalizedQuery, limit, hits, vectorEnabled, warning };
     },
   );
+  const graphEnabled =
+    options.graph === true ||
+    (typeof options.graph === "object" && options.graph.enabled !== false);
+  if (graphEnabled && result.hits.length > 0) {
+    const seedIds = [...new Set(result.hits.map((hit) => hit.fileId))].slice(0, 5);
+    result.graphContext = getGraphSearchContext(seedIds, {
+      projectRoot: options.projectRoot,
+      loadVector: false,
+      perSeedLimit: typeof options.graph === "object" ? options.graph.perSeedLimit : undefined,
+    });
+  }
+  return result;
 }
 
 /** KNN search over the vec0 virtual table. */
@@ -111,10 +123,7 @@ function runVectorSearch(
   dimensions: number,
 ): VectorRow[] {
   const vec = generateEmbedding(query, dimensions);
-  const stmt = db.prepare<
-    [Uint8Array, number],
-    Omit<VectorRow, "chunkId"> & { id: number }
-  >(
+  const stmt = db.prepare<[Uint8Array, number], Omit<VectorRow, "chunkId"> & { id: number }>(
     `SELECT v.rowid AS id,
             c.file_id       AS fileId,
             f.path          AS path,

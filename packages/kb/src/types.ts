@@ -103,6 +103,100 @@ export interface KbFileContent {
   chunks: Pick<KbChunk, "id" | "chunkIndex" | "startLine" | "endLine">[];
 }
 
+export type RelationDirection = "incoming" | "outgoing" | "both";
+export type RelationSourceKind = "frontmatter" | "markdown_link" | "wikilink" | "agent";
+export type RelationProposalStatus = "pending" | "approved" | "rejected" | "invalid";
+
+export interface RelationTypeDefinition {
+  name: string;
+  displayName: string;
+  inverseName: string | null;
+  symmetric: boolean;
+  core: boolean;
+}
+
+export interface RelationEvidence {
+  id: number;
+  sourceKind: RelationSourceKind;
+  originalTarget: string;
+  sourcePath: string;
+  startLine: number | null;
+  endLine: number | null;
+  evidenceText: string | null;
+  rationale: string | null;
+  confidence: number;
+}
+
+export interface DocumentRelation {
+  id: number;
+  sourceFileId: number;
+  sourcePath: string;
+  sourceTitle: string;
+  targetFileId: number;
+  targetPath: string;
+  targetTitle: string;
+  relationType: string;
+  direction: "incoming" | "outgoing";
+  symmetric: boolean;
+  evidence: RelationEvidence[];
+}
+
+export interface DocumentGraphNode {
+  fileId: number;
+  path: string;
+  title: string;
+  slug: string;
+  tags: string[];
+}
+
+export interface DocumentNeighborhood {
+  center: DocumentGraphNode;
+  nodes: DocumentGraphNode[];
+  relations: DocumentRelation[];
+  tagRelated: Array<DocumentGraphNode & { sharedTags: string[] }>;
+  depth: number;
+}
+
+export interface RelationProposal {
+  id: number;
+  sourceFileId: number | null;
+  targetFileId: number | null;
+  sourcePath: string;
+  targetPath: string;
+  relationType: string;
+  confidence: number;
+  rationale: string;
+  evidencePath: string;
+  evidenceStartLine: number;
+  evidenceEndLine: number;
+  evidenceText: string | null;
+  status: RelationProposalStatus;
+  createdAt: string;
+  reviewedAt: string | null;
+}
+
+export interface RelationDiagnostic {
+  id: number;
+  sourceFileId: number;
+  sourcePath: string;
+  relationType: string;
+  sourceKind: Exclude<RelationSourceKind, "agent">;
+  originalTarget: string;
+  startLine: number | null;
+  reason: string;
+}
+
+export interface GraphSearchContext {
+  seedFileId: number;
+  seedPath: string;
+  relatedFileId: number;
+  relatedPath: string;
+  relatedTitle: string;
+  relationType: string;
+  direction: "incoming" | "outgoing";
+  evidence: RelationEvidence[];
+}
+
 /** Per-language file count, for stats. */
 export interface KbLanguageStat {
   language: string;
@@ -162,6 +256,7 @@ export interface SearchResult {
   vectorEnabled: boolean;
   /** Populated if the FTS leg failed (e.g. special chars like "P&L"). */
   warning?: string;
+  graphContext?: GraphSearchContext[];
 }
 
 /** Options for `listFiles`. */

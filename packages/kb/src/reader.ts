@@ -85,7 +85,9 @@ interface LangRow {
 function byLanguage(db: DatabaseType): LangRow[] {
   if (!tableExists(db, TABLE_NAMES.files)) return [];
   return db
-    .prepare("SELECT language, COUNT(*) AS count FROM files GROUP BY language ORDER BY count DESC, language ASC")
+    .prepare(
+      "SELECT language, COUNT(*) AS count FROM files GROUP BY language ORDER BY count DESC, language ASC",
+    )
     .all() as LangRow[];
 }
 
@@ -122,9 +124,9 @@ export function listFiles(options: OpenOptions & ListFilesOptions = {}): KbFileL
     const params: string[] = [];
     if (q) params.push(`%${q}%`);
 
-    const countRow = db
-      .prepare(`SELECT COUNT(*) AS c FROM files f ${where}`)
-      .get(...params) as { c: number };
+    const countRow = db.prepare(`SELECT COUNT(*) AS c FROM files f ${where}`).get(...params) as {
+      c: number;
+    };
     const total = countRow.c;
 
     const offset = (page - 1) * pageSize;
@@ -210,8 +212,14 @@ export function getFileContent(fileId: number, options: OpenOptions = {}): KbFil
     if (!baseTablesOk(db)) return null;
 
     const file = db
-      .prepare(`SELECT id, path, language FROM files WHERE id = ?`)
-      .get(fileId) as { id: number; path: string; language: string } | undefined;
+      .prepare(
+        `SELECT f.id, f.path, f.language, d.body
+           FROM files f LEFT JOIN documents d ON d.file_id = f.id
+          WHERE f.id = ?`,
+      )
+      .get(fileId) as
+      | { id: number; path: string; language: string; body: string | null }
+      | undefined;
     if (!file) return null;
 
     const chunks = db
@@ -227,7 +235,7 @@ export function getFileContent(fileId: number, options: OpenOptions = {}): KbFil
       content: string;
     }>;
 
-    const content = chunks.map((c) => c.content).join("\n");
+    const content = file.body ?? chunks.map((c) => c.content).join("\n");
     return {
       fileId: file.id,
       path: file.path,

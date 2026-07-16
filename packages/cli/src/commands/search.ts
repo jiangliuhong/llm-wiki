@@ -18,6 +18,7 @@ export function makeSearchCommand(): Command {
     .argument("<query>", "Search query")
     .option("-l, --limit <n>", "Max results", (value: string) => parseLimit(value), 8)
     .option("--json", "Output results as JSON", false)
+    .option("--graph", "Expand results through approved one-hop document relations", false)
     .action((query: string, options: SearchOptions) => runSearch(query, options));
 
   return command;
@@ -26,6 +27,7 @@ export function makeSearchCommand(): Command {
 interface SearchOptions {
   limit: number;
   json?: boolean;
+  graph?: boolean;
 }
 
 async function runSearch(query: string, options: SearchOptions): Promise<void> {
@@ -50,6 +52,7 @@ async function runSearch(query: string, options: SearchOptions): Promise<void> {
     dimensions: kbConfig.embedding.dimensions,
     enableVector: kbConfig.embedding.enabled,
     limit: options.limit,
+    graph: options.graph ?? false,
   });
 
   if (options.json) {
@@ -80,6 +83,14 @@ async function runSearch(query: string, options: SearchOptions): Promise<void> {
     }
     if (hit.bm25 !== undefined) {
       logger.raw(`  bm25: ${hit.bm25.toFixed(4)}`);
+    }
+  }
+  if (result.graphContext?.length) {
+    logger.info("Related documents:");
+    for (const related of result.graphContext) {
+      logger.raw(
+        `  ${related.seedPath} --${related.relationType} (${related.direction})--> ${related.relatedPath}`,
+      );
     }
   }
 }

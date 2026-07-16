@@ -73,6 +73,31 @@ export default function SearchResults({ query }: { query: string }): React.React
           </li>
         ))}
       </ul>
+      {result.graphContext?.length ? (
+        <section className="mt-10 border-t border-slate-200 pt-7">
+          <h2 className="text-sm font-semibold text-slate-800">
+            Related through the document graph
+          </h2>
+          <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+            {result.graphContext.map((item, index) => (
+              <li
+                key={`${item.seedFileId}-${item.relatedFileId}-${item.relationType}-${index}`}
+                className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3"
+              >
+                <Link
+                  href={`/files/${item.relatedFileId}`}
+                  className="text-sm font-medium text-indigo-700 hover:underline"
+                >
+                  {item.relatedTitle}
+                </Link>
+                <p className="mt-1 text-xs text-slate-500">
+                  {item.seedPath} · {item.relationType} · {item.direction}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </section>
   );
 }
