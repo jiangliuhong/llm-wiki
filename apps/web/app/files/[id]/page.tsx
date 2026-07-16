@@ -28,8 +28,8 @@ export default async function FilePage({
   const indexedAt = detail?.file.indexedAt ?? null;
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 overflow-y-auto">
+    <div className="flex h-full min-h-0 overflow-hidden">
+      <div className="min-w-0 flex-1 overflow-y-auto">
         <DocContent
           path={content.path}
           language={content.language}
@@ -37,7 +37,7 @@ export default async function FilePage({
           content={content.content}
         />
       </div>
-      <aside className="hidden w-64 shrink-0 border-l border-default-200 bg-content1/40 xl:block">
+      <aside className="wiki-toc hidden w-64 shrink-0 overflow-hidden xl:block">
         <TableOfContents markdown={content.content} />
       </aside>
     </div>

@@ -15,6 +15,10 @@ import type { NextConfig } from "next";
  */
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // `llm-wiki-cli serve` intentionally uses Next's development runtime so a
+  // globally linked CLI can serve the bundled source without requiring a
+  // separate web build. Hide Next's development toolbar from the end-user UI.
+  devIndicators: false,
   transpilePackages: ["@heroui/react"],
   serverExternalPackages: ["better-sqlite3", "sqlite-vec"],
 };

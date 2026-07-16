@@ -59,29 +59,28 @@ export default function TableOfContents({ markdown }: { markdown: string }): Rea
   const items = useMemo(() => extractHeadings(markdown), [markdown]);
 
   return (
-    <nav
-      className="sticky top-14 max-h-[calc(100vh-3.5rem)] overflow-y-auto px-4 py-8"
-      aria-label="On this page"
-    >
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-default-400">
+    <nav className="flex h-full min-h-0 flex-col px-6 py-10" aria-label="On this page">
+      <h2 className="mb-4 shrink-0 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
         On this page
       </h2>
-      {items.length === 0 ? (
-        <p className="text-sm text-default-400">No headings.</p>
-      ) : (
-        <ul className="flex flex-col gap-1.5 border-l border-default-200">
-          {items.map((item, i) => (
-            <li key={`${item.id}-${i}`} className={item.level === 3 ? "ml-3" : ""}>
-              <a
-                href={`#${item.id}`}
-                className="-ml-px block border-l-0 border-l-primary/0 py-0.5 pl-3 text-sm text-default-500 transition-colors hover:border-l-primary hover:text-foreground"
-              >
-                {item.text}
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div className="toc-scroll min-h-0 flex-1 overflow-y-auto">
+        {items.length === 0 ? (
+          <p className="text-sm text-slate-400">No headings.</p>
+        ) : (
+          <ul className="toc-list flex flex-col gap-1 border-l border-slate-200">
+            {items.map((item, i) => (
+              <li key={`${item.id}-${i}`} className={item.level === 3 ? "ml-3" : ""}>
+                <a
+                  href={`#${item.id}`}
+                  className="-ml-px block border-l border-transparent py-1 pl-3 text-[13px] leading-5 text-slate-500 transition-colors hover:border-indigo-500 hover:text-indigo-700"
+                >
+                  {item.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </nav>
   );
 }

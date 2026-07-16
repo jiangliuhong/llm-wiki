@@ -37,23 +37,28 @@ export default function DocContent({
   const indexed = indexedAt ? new Date(indexedAt).toLocaleString() : null;
 
   return (
-    <article className="prose-doc mx-auto w-full max-w-3xl px-6 py-8">
-      <header className="mb-6 border-b border-default-200 pb-4">
-        <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-sm text-default-400">
+    <article className="prose-doc mx-auto w-full max-w-4xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12">
+      <header className="doc-meta mb-8 pb-5">
+        <nav
+          aria-label="Breadcrumb"
+          className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-slate-400"
+        >
           {segments.map((seg, i) => (
             <span key={i} className="flex items-center gap-1">
-              {i > 0 ? <span aria-hidden>/</span> : null}
-              <span className={i === segments.length - 1 ? "text-default-600" : ""}>{seg}</span>
+              {i > 0 ? (
+                <span aria-hidden className="text-slate-300">
+                  /
+                </span>
+              ) : null}
+              <span className={i === segments.length - 1 ? "text-slate-600" : ""}>{seg}</span>
             </span>
           ))}
         </nav>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Chip size="sm" variant="soft">
             {language}
           </Chip>
-          {indexed ? (
-            <span className="text-xs text-default-400">Indexed {indexed}</span>
-          ) : null}
+          {indexed ? <span className="text-xs text-slate-400">Updated {indexed}</span> : null}
         </div>
       </header>
 
@@ -61,15 +66,9 @@ export default function DocContent({
         remarkPlugins={[remarkGfm]}
         components={{
           // Slugify headings so the TOC anchors resolve.
-          h1: ({ children }) => (
-            <h1 id={slugify(extractText(children))}>{children}</h1>
-          ),
-          h2: ({ children }) => (
-            <h2 id={slugify(extractText(children))}>{children}</h2>
-          ),
-          h3: ({ children }) => (
-            <h3 id={slugify(extractText(children))}>{children}</h3>
-          ),
+          h1: ({ children }) => <h1 id={slugify(extractText(children))}>{children}</h1>,
+          h2: ({ children }) => <h2 id={slugify(extractText(children))}>{children}</h2>,
+          h3: ({ children }) => <h3 id={slugify(extractText(children))}>{children}</h3>,
         }}
       >
         {content}

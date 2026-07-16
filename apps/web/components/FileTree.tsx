@@ -95,19 +95,37 @@ export default function FileTree(): React.ReactElement {
   };
 
   return (
-    <nav className="flex h-full flex-col gap-2 p-3" aria-label="File browser">
-      <Input
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder="Filter files…"
-        aria-label="Filter files"
-        className="mb-1 h-8 text-sm"
-      />
-      <div className="-mr-1 flex-1 overflow-y-auto pr-1">
+    <nav className="flex h-full flex-col" aria-label="File browser">
+      <div className="px-4 pb-3 pt-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
+            Documents
+          </h2>
+          {files.length > 0 ? (
+            <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+              {filtered.length}
+            </span>
+          ) : null}
+        </div>
+        <Input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter files…"
+          aria-label="Filter files"
+          className="wiki-filter h-9 text-sm"
+        />
+      </div>
+      <div className="wiki-tree-scroll flex-1 overflow-y-auto px-3 pb-5">
         {error ? (
-          <p className="px-2 py-1 text-sm text-danger">{error}</p>
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-danger">{error}</p>
         ) : files.length === 0 ? (
-          <p className="px-2 py-1 text-sm text-default-400">No files indexed.</p>
+          <p className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-sm text-slate-400">
+            No files indexed
+          </p>
+        ) : filtered.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-sm text-slate-400">
+            No matching files
+          </p>
         ) : (
           <TreeBranch
             node={tree}
@@ -161,15 +179,15 @@ function TreeBranch({
               <button
                 type="button"
                 onClick={() => onToggle(key)}
-                className="flex w-full items-center gap-1 rounded px-2 py-1 text-left text-sm text-default-700 hover:bg-default-100"
+                className="tree-row flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm font-medium text-slate-600"
                 style={{ paddingLeft: `${depth * 0.85 + 0.5}rem` }}
                 aria-expanded={!isCollapsed}
               >
-                <span aria-hidden className="w-3 shrink-0 text-default-400">
+                <span aria-hidden className="w-3 shrink-0 text-[10px] text-slate-400">
                   {isCollapsed ? "▸" : "▾"}
                 </span>
-                <span aria-hidden className="text-amber-500">
-                  📁
+                <span aria-hidden className="tree-folder-icon">
+                  {isCollapsed ? "+" : "−"}
                 </span>
                 <span className="truncate">{child.name}</span>
               </button>
@@ -191,16 +209,14 @@ function TreeBranch({
           <li key={key}>
             <Link
               href={`/files/${child.file!.id}`}
-              className={`flex items-center gap-1 rounded px-2 py-1 text-sm ${
-                isActive
-                  ? "bg-primary/10 font-medium text-primary"
-                  : "text-default-700 hover:bg-default-100"
+              className={`tree-row flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
+                isActive ? "tree-row-active font-semibold text-indigo-700" : "text-slate-600"
               }`}
               style={{ paddingLeft: `${depth * 0.85 + 0.5}rem` }}
             >
               <span aria-hidden className="w-3 shrink-0" />
-              <span aria-hidden className="text-sky-500">
-                📄
+              <span aria-hidden className="tree-file-icon">
+                MD
               </span>
               <span className="truncate">{child.name}</span>
             </Link>

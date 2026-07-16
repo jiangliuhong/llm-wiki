@@ -1,10 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
 import TopNav from "@/components/TopNav";
 import FileTree from "@/components/FileTree";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
 
 /**
  * Root layout for the LLM Wiki web app — a persistent three-panel doc viewer:
@@ -31,25 +28,22 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#000000" },
-  ],
+  themeColor: "#f8fafc",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
   return (
-    <html lang="en" className={`${inter.variable} light`} suppressHydrationWarning>
-      <body className="min-h-screen bg-background text-foreground antialiased">
-        <div className="flex min-h-screen flex-col">
+    <html lang="en" className="light" suppressHydrationWarning>
+      <body className="h-screen overflow-hidden text-foreground antialiased">
+        <div className="wiki-shell flex h-screen overflow-hidden flex-col">
           <TopNav title={wikiTitle} />
-          <div className="flex flex-1 overflow-hidden">
-            <aside className="hidden w-64 shrink-0 border-r border-default-200 bg-content1/40 md:block">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            <aside className="wiki-sidebar hidden w-72 shrink-0 md:block">
               <FileTree />
             </aside>
-            <div className="flex-1 overflow-hidden">{children}</div>
+            <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
           </div>
         </div>
       </body>

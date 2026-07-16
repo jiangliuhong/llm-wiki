@@ -33,11 +33,19 @@ export default async function HomePage({
 
   return (
     <div className="flex h-full items-center justify-center p-8">
-      <div className="max-w-md text-center">
-        <h1 className="text-2xl font-semibold">No documents indexed yet</h1>
-        <p className="mt-2 text-default-500">
-          Run <code className="rounded bg-default-100 px-1.5 py-0.5">llm-wiki-cli index</code> to
-          populate the knowledge base, then refresh this page.
+      <div className="empty-state max-w-md rounded-3xl border border-slate-200 bg-white px-8 py-10 text-center shadow-sm">
+        <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-50 text-sm font-bold text-indigo-600">
+          MD
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+          No documents indexed yet
+        </h1>
+        <p className="mt-3 text-sm leading-6 text-slate-500">
+          Run{" "}
+          <code className="rounded-md bg-slate-100 px-1.5 py-1 font-mono text-xs text-indigo-700">
+            llm-wiki-cli index
+          </code>{" "}
+          to populate the knowledge base, then refresh this page.
         </p>
       </div>
     </div>
