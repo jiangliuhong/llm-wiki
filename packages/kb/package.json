@@ -1,6 +1,6 @@
 {
   "name": "@llm-wiki/kb",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared knowledge-base engine (scan, chunk, embed, index, hybrid search) for LLLM Wiki.",
   "private": true,
   "type": "module",

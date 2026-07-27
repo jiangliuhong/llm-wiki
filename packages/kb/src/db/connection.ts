@@ -27,6 +27,13 @@ export interface KbConnection {
 export interface OpenOptions {
   /** Project root containing `.llm-wiki/`. Defaults to `process.cwd()`. */
   projectRoot?: string;
+  /**
+   * Explicit SQLite file path. When omitted, the DB is resolved from
+   * {@link projectRoot} as `<root>/.llm-wiki/index.db`. Decouples the DB
+   * location from the project root so callers can build/serve indexes from
+   * arbitrary files (e.g. `index --output-db`, `validate --db`).
+   */
+  dbPath?: string;
   /** Open the DB read-only (for queries). Defaults to `false` (read-write). */
   readonly?: boolean;
   /**
@@ -44,6 +51,18 @@ export const KB_DIR_NAME = ".llm-wiki";
 export const DB_FILE_NAME = "index.db";
 
 /**
+ * Resolves the absolute DB file path. An explicit `dbPath` (already absolute or
+ * resolved against `process.cwd()` by the caller) wins; otherwise the default
+ * `<projectRoot>/.llm-wiki/index.db` is used.
+ */
+export function resolveDbPath(projectRoot: string, dbPath?: string): string {
+  if (dbPath && dbPath.length > 0) {
+    return nodePath.isAbsolute(dbPath) ? dbPath : nodePath.resolve(process.cwd(), dbPath);
+  }
+  return nodePath.resolve(projectRoot, KB_DIR_NAME, DB_FILE_NAME);
+}
+
+/**
  * Opens the knowledge-base database.
  *
  * @throws If the SQLite file cannot be opened (e.g. corrupt, locked). Does NOT
@@ -52,7 +71,7 @@ export const DB_FILE_NAME = "index.db";
  */
 export function openDatabase(options: OpenOptions = {}): KbConnection {
   const projectRoot = options.projectRoot ?? process.cwd();
-  const dbPath = nodePath.resolve(projectRoot, KB_DIR_NAME, DB_FILE_NAME);
+  const dbPath = resolveDbPath(projectRoot, options.dbPath);
 
   const db = new Database(dbPath, {
     readonly: options.readonly ?? false,

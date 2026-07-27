@@ -7,6 +7,7 @@ import { splitIntoChunks } from "./chunker.js";
 import { generateEmbedding, float32ToBytes } from "./embedding.js";
 import { ensureKbDir, initSchema } from "./db/init.js";
 import { openDatabase, closeConnection, type KbConnection } from "./db/connection.js";
+import { computeConfigHash, writeIndexMetadata } from "./metadata.js";
 import type { KbConfig, IndexStats } from "./types.js";
 import {
   normalizeRelationType,
@@ -31,6 +32,13 @@ import {
 export interface IndexRunOptions {
   /** Project root the KB belongs to. */
   projectRoot?: string;
+  /**
+   * Explicit SQLite file path. When omitted the default
+   * `<projectRoot>/.llm-wiki/index.db` is used. Supports building into a
+   * throwaway file (e.g. `index --output-db`) that the caller swaps in
+   * atomically after a successful index + validate.
+   */
+  dbPath?: string;
   /** Resolved KB config (merged with defaults by the caller). */
   config: KbConfig;
   /**
@@ -38,6 +46,15 @@ export interface IndexRunOptions {
    * scanned file is treated as new.
    */
   reset?: boolean;
+  /**
+   * Free-form revision identifier (e.g. the merged commit sha) to record as
+   * the source this index was built from. `llm-wiki-cli` never reads git —
+   * callers (e.g. pi-agents) are responsible for passing the right value.
+   * Stored verbatim in index metadata.
+   */
+  sourceRevision?: string;
+  /** Optional human-readable source branch label, recorded alongside the revision. */
+  sourceBranch?: string;
   /** Receives one line per significant event (for CLI output). */
   onProgress?: (message: string) => void;
 }
@@ -64,9 +81,10 @@ export function indexFiles(options: IndexRunOptions): IndexStats {
   const projectRoot = options.projectRoot ?? process.cwd();
   const onProgress = options.onProgress ?? (() => {});
 
-  ensureKbDir(projectRoot);
+  ensureKbDir(projectRoot, options.dbPath);
   const conn = openDatabase({
     projectRoot,
+    dbPath: options.dbPath,
     loadVector: options.config.embedding.enabled,
     warn: onProgress,
   });
@@ -301,6 +319,25 @@ function runIndex(conn: KbConnection, projectRoot: string, options: IndexRunOpti
       inputs.map((input) => ({ path: input.file.relPath, parsed: input.parsed })),
       scan.unavailableRoots.length === 0 && inputs.length === scanned.length,
     );
+
+    // Record provenance metadata atomically with the rows it describes. The
+    // counts reflect the post-index state of the DB, not just this pass's
+    // deltas, so consumers (status/validate) see the true index size.
+    const fileCount = (
+      db.prepare("SELECT COUNT(*) AS c FROM files").get() as { c: number }
+    ).c;
+    const chunkCount = (
+      db.prepare("SELECT COUNT(*) AS c FROM chunks").get() as { c: number }
+    ).c;
+    writeIndexMetadata(db, {
+      sourceRevision: options.sourceRevision,
+      sourceBranch: options.sourceBranch,
+      contentDirectories: [...config.include],
+      configHash: computeConfigHash(config),
+      builtAt: new Date().toISOString(),
+      fileCount,
+      chunkCount,
+    });
   });
 
   tx();

@@ -113,8 +113,20 @@ function assertNonNegInt(value: unknown, field: string): void {
  * @throws {ConfigError} If the file is missing, malformed, or invalid.
  */
 export function loadConfig(cwd?: string): WikiConfig {
-  const configPath = getConfigPath(cwd);
+  return loadConfigFromPath(getConfigPath(cwd));
+}
 
+/**
+ * Loads and validates the wiki config from an explicit file path.
+ *
+ * Used by commands that honor the global `--config` / `LLM_WIKI_CONFIG`
+ * option, decoupling the config location from the project root.
+ *
+ * @param configPath Absolute path to a `config.json` file.
+ * @returns The validated {@link WikiConfig}.
+ * @throws {ConfigError} If the file is missing, malformed, or invalid.
+ */
+export function loadConfigFromPath(configPath: string): WikiConfig {
   if (!nodeFs.existsSync(configPath)) {
     throw new ConfigError(
       `Config file not found at ${configPath}.\n` + `Run "llm-wiki-cli init" first to create one.`,

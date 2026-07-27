@@ -257,7 +257,47 @@ export interface SearchResult {
   /** Populated if the FTS leg failed (e.g. special chars like "P&L"). */
   warning?: string;
   graphContext?: GraphSearchContext[];
+  /**
+   * Provenance of the index this search ran against. Populated by the CLI
+   * layer (not the kb search core) so answers can cite which commit the
+   * knowledge came from. `null` when the index has no metadata yet.
+   */
+  index?: IndexMetadata | null;
 }
+
+/**
+ * Provenance metadata recorded alongside an index. Stored as rows in the
+ * `schema_meta` KV table and reassembled by {@link readIndexMetadata}.
+ *
+ * `sourceRevision`/`sourceBranch` are caller-supplied (llm-wiki-cli does not
+ * read git); `configHash` lets consumers detect when index-affecting config
+ * has drifted from the stored index.
+ */
+export interface IndexMetadata {
+  /** Schema version the index was built under. */
+  schemaVersion: number;
+  /** Caller-supplied source revision (e.g. merged commit sha). May be empty. */
+  sourceRevision: string;
+  /** Caller-supplied source branch label. May be empty. */
+  sourceBranch: string;
+  /** The `kb.include` directories this index was built from. */
+  contentDirectories: string[];
+  /** sha256 of the index-affecting config (see {@link computeConfigHash}). */
+  configHash: string;
+  /** ISO timestamp of the last indexing pass. */
+  builtAt: string;
+  /** Number of files in the index at build time. */
+  fileCount: number;
+  /** Number of chunks in the index at build time. */
+  chunkCount: number;
+}
+
+/**
+ * Schema version the current code writes and expects when validating. Bumped
+ * whenever the DDL or the {@link IndexMetadata} contract changes in a way that
+ * requires a rebuild.
+ */
+export const EXPECTED_SCHEMA_VERSION = 3;
 
 /** Options for `listFiles`. */
 export interface ListFilesOptions {

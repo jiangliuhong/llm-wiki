@@ -2,7 +2,7 @@ import { Command } from "commander";
 import nodeFs from "node:fs";
 import nodePath from "node:path";
 import { fileURLToPath } from "node:url";
-import { getDefaultConfig, saveConfig, hasConfig } from "../utils/config.js";
+import { getDefaultConfig, saveConfig, hasConfig, loadConfig } from "../utils/config.js";
 import { getConfigPath } from "../utils/paths.js";
 import { logger } from "../utils/logger.js";
 
@@ -34,8 +34,8 @@ export function makeInitCommand(): Command {
       (value: string) => parsePort(value),
       getDefaultConfig().port,
     )
-    .action((options: InitOptions) => {
-      runInit(options);
+    .action((options: InitOptions, cmd: Command) => {
+      runInit(options, cmd);
     });
 
   return command;
@@ -46,68 +46,115 @@ interface InitOptions {
   port: number;
 }
 
-function runInit(options: InitOptions): void {
-  const createdSkills = createSkills();
+function runInit(options: InitOptions, cmd: Command): void {
+  // --root overrides the default cwd-based scaffold location. init still
+  // treats the target as a project directory (it creates .llm-wiki/, wiki/,
+  // .agents/ there), so we resolve the global root and pass it down as cwd.
+  const root = (cmd.optsWithGlobals().root as string | undefined) ?? process.cwd();
 
-  if (hasConfig()) {
+  if (hasConfig(root)) {
+    // Config exists: still install any missing skills, rendered against the
+    // existing config's content directory so they reflect the real layout.
+    const existing = loadExistingConfigSafe(root);
+    const createdSkills = createSkills(root, existing?.kb?.include ?? []);
     logger.warn(
-      `A config already exists at ${getConfigPath()}.\n` + `The existing config was not changed.`,
+      `A config already exists at ${getConfigPath(root)}.\n` + `The existing config was not changed.`,
     );
-    logCreatedSkills(createdSkills);
+    logCreatedSkills(createdSkills, root);
     return;
   }
 
-  const config = { title: options.title, port: options.port, kb: getDefaultConfig().kb };
-  saveConfig(config);
+  const defaultConfig = getDefaultConfig();
+  const config = { title: options.title, port: options.port, kb: defaultConfig.kb };
+
+  // Install skills rendered against the config we are about to write, so the
+  // placeholder substitution matches the real content directory.
+  const createdSkills = createSkills(root, config.kb?.include ?? ["wiki"]);
+
+  saveConfig(config, root);
 
   // Create a wiki/ content directory so `index` has something to chew on
   // immediately. Only create if missing — never clobber existing content.
-  createContentDir();
+  createContentDir(root);
 
   logger.success(`Wiki initialized successfully`);
-  logger.info(`Created ${getConfigPath()}`);
-  logCreatedSkills(createdSkills);
+  logger.info(`Created ${getConfigPath(root)}`);
+  logCreatedSkills(createdSkills, root);
   logger.info(`Title: "${config.title}"  Port: ${config.port}`);
   logger.info(`Next: add files to wiki/ and run "llm-wiki-cli index".`);
 }
 
+/** Loads the existing config without throwing on parse errors (best-effort). */
+function loadExistingConfigSafe(
+  cwd: string,
+): { kb?: { include?: string[] } } | null {
+  try {
+    return loadConfig(cwd) as { kb?: { include?: string[] } };
+  } catch {
+    return null;
+  }
+}
+
 const BUNDLED_SKILLS = ["kb-write-docs", "kb-search-docs", "kb-infer-relations"] as const;
 
-/** Installs missing bundled skills without changing user-customized copies. */
-function createSkills(): string[] {
+/** Placeholder substituted into SKILL.md during install. */
+const KB_INCLUDE_PLACEHOLDER = "{{KB_INCLUDE}}";
+const KB_STAGING_PLACEHOLDER = "{{KB_STAGING}}";
+
+/**
+ * Installs missing bundled skills without changing user-customized copies.
+ *
+ * SKILL.md files contain `{{KB_INCLUDE}}` / `{{KB_STAGING}}` placeholders that
+ * are rendered against the project's configured content directory so the
+ * installed skill text reflects the real layout instead of a hardcoded
+ * `wiki/`. Non-SKILL.md files (e.g. `agents/openai.yaml`) are copied verbatim.
+ */
+function createSkills(cwd: string, includeRoots: readonly string[]): string[] {
   const sourceRoot = nodePath.resolve(
     nodePath.dirname(fileURLToPath(import.meta.url)),
     "..",
     "..",
     "skills",
   );
-  const targetRoot = nodePath.resolve(process.cwd(), ".agents", "skills");
+  const targetRoot = nodePath.resolve(cwd, ".agents", "skills");
   const created: string[] = [];
+  const includeRoot = includeRoots[0] ?? "wiki";
 
   for (const skill of BUNDLED_SKILLS) {
     const source = nodePath.join(sourceRoot, skill);
     const target = nodePath.join(targetRoot, skill);
     if (nodeFs.existsSync(target)) {
-      logger.info(`Kept existing ${nodePath.relative(process.cwd(), target)}`);
+      logger.info(`Kept existing ${nodePath.relative(cwd, target)}`);
       continue;
     }
     nodeFs.mkdirSync(targetRoot, { recursive: true });
     nodeFs.cpSync(source, target, { recursive: true, errorOnExist: true });
-    created.push(nodePath.relative(process.cwd(), target));
+    // Render placeholders in SKILL.md after the verbatim copy.
+    const skillFile = nodePath.join(target, "SKILL.md");
+    if (nodeFs.existsSync(skillFile)) {
+      const rendered = nodeFs
+        .readFileSync(skillFile, "utf8")
+        .replaceAll(KB_INCLUDE_PLACEHOLDER, includeRoot)
+        .replaceAll(KB_STAGING_PLACEHOLDER, "temp");
+      nodeFs.writeFileSync(skillFile, rendered, "utf8");
+    }
+    created.push(nodePath.relative(cwd, target));
   }
 
   return created;
 }
 
-function logCreatedSkills(skills: string[]): void {
+function logCreatedSkills(skills: string[], cwd: string = process.cwd()): void {
   for (const skill of skills) {
-    logger.info(`Created ${skill}`);
+    // Prefer the absolute path when the relative form collapses to "" (i.e.
+    // the target equals cwd), so the log line is never empty.
+    logger.info(`Created ${skill || nodePath.resolve(cwd)}`);
   }
 }
 
 /** Creates the default `wiki/` dir with a placeholder Markdown file. */
-function createContentDir(): void {
-  const wikiDir = nodePath.resolve(process.cwd(), "wiki");
+function createContentDir(cwd: string = process.cwd()): void {
+  const wikiDir = nodePath.resolve(cwd, "wiki");
   if (nodeFs.existsSync(wikiDir)) {
     return;
   }
@@ -125,7 +172,7 @@ function createContentDir(): void {
     ].join("\n"),
     "utf8",
   );
-  logger.info(`Created ${nodePath.relative(process.cwd(), placeholder) || placeholder}`);
+  logger.info(`Created ${nodePath.relative(cwd, placeholder) || placeholder}`);
 }
 
 function parsePort(value: string): number {

@@ -34,7 +34,9 @@ export type {
   RelationProposal,
   RelationDiagnostic,
   GraphSearchContext,
+  IndexMetadata,
 } from "./types.js";
+export { EXPECTED_SCHEMA_VERSION } from "./types.js";
 
 // Config
 export { DEFAULT_KB_CONFIG, getDefaultKbConfig, assertKbConfig, mergeKbConfig } from "./config.js";
@@ -44,12 +46,14 @@ export {
   openDatabase,
   closeConnection,
   withReadonlyDb,
+  resolveDbPath,
   KB_DIR_NAME,
   DB_FILE_NAME,
   type KbConnection,
   type OpenOptions,
 } from "./db/connection.js";
 export { ensureKbDir, initSchema } from "./db/init.js";
+export { TABLE_NAMES } from "./db/schema.js";
 
 // Scanning / chunking / embedding
 export {
@@ -62,6 +66,12 @@ export {
 } from "./scanner.js";
 export { splitIntoChunks, type Chunk, type ChunkOptions } from "./chunker.js";
 export { generateEmbedding, float32ToBytes } from "./embedding.js";
+export {
+  computeConfigHash,
+  writeIndexMetadata,
+  readIndexMetadata,
+  type IndexMetadataInput,
+} from "./metadata.js";
 
 // Indexing / search / reading
 export { indexFiles, type IndexRunOptions } from "./indexer.js";

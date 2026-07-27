@@ -24,13 +24,13 @@ Create auditable proposal JSON for `llm-wiki-cli relations propose`. Never write
   "version": 1,
   "proposals": [
     {
-      "source": "wiki/architecture.md",
-      "target": "wiki/storage.md",
+      "source": "{{KB_INCLUDE}}/architecture.md",
+      "target": "{{KB_INCLUDE}}/storage.md",
       "type": "depends_on",
       "confidence": 0.91,
       "rationale": "The architecture explicitly requires the storage contract.",
       "evidence": {
-        "path": "wiki/architecture.md",
+        "path": "{{KB_INCLUDE}}/architecture.md",
         "startLine": 18,
         "endLine": 20,
         "text": "The indexing layer persists every document in the local storage contract."
@@ -39,6 +39,8 @@ Create auditable proposal JSON for `llm-wiki-cli relations propose`. Never write
   ]
 }
 ```
+
+`{{KB_INCLUDE}}` is a placeholder filled by `llm-wiki-cli init` from the project's `kb.include` configuration. Replace it with the real content root when constructing actual proposal paths.
 
 ## Guardrails
 

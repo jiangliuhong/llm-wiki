@@ -1,6 +1,6 @@
 import nodeFs from "node:fs";
 import nodePath from "node:path";
-import { KB_DIR_NAME } from "./connection.js";
+import { resolveDbPath } from "./connection.js";
 import { applyBaseSchema, applyVectorSchema } from "./schema.js";
 import type { KbConnection } from "./connection.js";
 
@@ -22,11 +22,19 @@ export interface InitSchemaOptions {
   resetVector?: boolean;
 }
 
-/** Ensures the `.llm-wiki/` directory exists. Returns its absolute path. */
-export function ensureKbDir(projectRoot: string = process.cwd()): string {
-  const dir = nodePath.resolve(projectRoot, KB_DIR_NAME);
-  nodeFs.mkdirSync(dir, { recursive: true });
-  return dir;
+/**
+ * Ensures the directory holding the DB exists. With an explicit `dbPath`
+ * (e.g. `--output-db`) only that file's parent directory is created — the
+ * default `.llm-wiki/` under `projectRoot` is left untouched. Returns the
+ * absolute DB path.
+ */
+export function ensureKbDir(
+  projectRoot: string = process.cwd(),
+  dbPath?: string,
+): string {
+  const resolved = resolveDbPath(projectRoot, dbPath);
+  nodeFs.mkdirSync(nodePath.dirname(resolved), { recursive: true });
+  return resolved;
 }
 
 /**

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -61,22 +61,45 @@ test("init adds missing skills without overwriting existing skills or config", (
 test("search before index is handled without an unhandled stack trace", () => {
   const cwd = makeProject();
   const result = run(cwd, ["search", "anything"]);
-  assert.equal(result.status, 1);
+  // DB errors now exit with code 3 (EXIT_DB) under the stable error protocol.
+  assert.equal(result.status, 3);
   assert.match(result.stderr, /unable to open database file/);
   assert.doesNotMatch(result.stderr, /at openDatabase/);
+});
+
+test("search --read-only returns empty results when the DB does not exist", () => {
+  const cwd = makeProject();
+  const result = run(cwd, ["search", "anything", "--read-only", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.hits.length, 0);
+  assert.equal(parsed.index, null);
 });
 
 test("search rejects malformed limits and empty queries", () => {
   const cwd = makeProject();
   for (const value of ["1.5", "2abc", "0", "51"]) {
     const result = run(cwd, ["search", "anything", "--limit", value]);
-    assert.equal(result.status, 1, `limit ${value} should fail`);
+    // Argument errors now exit with code 4 (EXIT_ARGS).
+    assert.equal(result.status, 4, `limit ${value} should fail`);
     assert.match(result.stderr, /Expected an integer between 1 and 50/);
   }
 
   const empty = run(cwd, ["search", ""]);
-  assert.equal(empty.status, 1);
+  assert.equal(empty.status, 4);
   assert.match(empty.stderr, /must not be empty/);
+});
+
+test("config errors exit with code 2 and emit structured JSON under --json", () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "llm-wiki-cli-test-"));
+  // No init → no config.
+  const human = run(cwd, ["search", "anything"]);
+  assert.equal(human.status, 2);
+  const json = run(cwd, ["search", "anything", "--json"]);
+  assert.equal(json.status, 2);
+  const parsed = JSON.parse(json.stderr);
+  assert.equal(typeof parsed.error, "object");
+  assert.match(parsed.error.code, /^CONFIG_/);
 });
 
 test("relations commands import, list, approve, and expose graph search context", () => {
@@ -152,3 +175,138 @@ test("serve schema preparation upgrades a pre-graph database", () => {
     closeConnection(migrated);
   }
 });
+
+// --- P0: server-side index pipeline support -------------------------------
+
+test("--root points the CLI at a knowledge base outside the cwd", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "llm-wiki-cli-root-"));
+  // init writes config + content dir under --root, not under cwd.
+  const initialized = run(tmpdir(), ["--root", root, "init", "--title", "Remote"]);
+  assert.equal(initialized.status, 0, initialized.stderr);
+  assert.equal(existsSync(path.join(root, ".llm-wiki", "config.json")), true);
+  assert.equal(existsSync(path.join(root, "wiki")), true);
+
+  writeFileSync(
+    path.join(root, "wiki", "note.md"),
+    "# Note\n\nA refund rule document.\n",
+    "utf8",
+  );
+  const indexed = run(tmpdir(), ["--root", root, "index"]);
+  assert.equal(indexed.status, 0, indexed.stderr);
+  assert.equal(existsSync(path.join(root, ".llm-wiki", "index.db")), true);
+});
+
+test("index --json --source-revision records provenance metadata", () => {
+  const cwd = makeProject();
+  writeFileSync(path.join(cwd, "wiki", "a.md"), "# A\n\nalpha content\n", "utf8");
+  const result = run(cwd, ["index", "--json", "--source-revision", "deadbeef", "--source-branch", "knowledge"]);
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.metadata.sourceRevision, "deadbeef");
+  assert.equal(parsed.metadata.sourceBranch, "knowledge");
+  assert.equal(parsed.metadata.schemaVersion, 3);
+  assert.ok(parsed.metadata.configHash.length > 0);
+  assert.ok(parsed.metadata.fileCount >= 1);
+});
+
+test("index --output-db leaves the active index untouched", () => {
+  const cwd = makeProject();
+  writeFileSync(path.join(cwd, "wiki", "a.md"), "# A\n\nalpha\n", "utf8");
+  // Build the active index first.
+  run(cwd, ["index"]);
+  const activeDb = path.join(cwd, ".llm-wiki", "index.db");
+  const activeMtime = statMtime(activeDb);
+
+  // Build into a throwaway file.
+  const outDb = path.join(cwd, "tmp", "candidate.db");
+  const result = run(cwd, ["index", "--output-db", outDb, "--source-revision", "c0ffee", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(outDb), true);
+  // Active DB was not rewritten.
+  assert.equal(statMtime(activeDb), activeMtime);
+
+  // The candidate DB is searchable and carries the recorded revision.
+  const searchResult = run(cwd, ["--db", outDb, "search", "alpha", "--json"]);
+  assert.equal(searchResult.status, 0, searchResult.stderr);
+  const parsed = JSON.parse(searchResult.stdout);
+  assert.equal(parsed.index.sourceRevision, "c0ffee");
+  assert.ok(parsed.hits.length >= 1);
+});
+
+test("index --seed-db copies a previous index before incrementing", () => {
+  const cwd = makeProject();
+  writeFileSync(path.join(cwd, "wiki", "a.md"), "# A\n\nalpha\n", "utf8");
+  run(cwd, ["index"]);
+  const previous = path.join(cwd, ".llm-wiki", "index.db");
+
+  const outDb = path.join(cwd, "tmp", "seeded.db");
+  const result = run(cwd, ["index", "--seed-db", previous, "--output-db", outDb, "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const parsed = JSON.parse(result.stdout);
+  assert.equal(parsed.ok, true);
+  assert.ok(parsed.metadata.fileCount >= 1);
+});
+
+test("status reports db_missing, up-to-date, and revision drift", () => {
+  // Missing DB → exists:false, exit 0.
+  const cwd = makeProject();
+  const missing = run(cwd, ["status", "--json"]);
+  assert.equal(missing.status, 0, missing.stderr);
+  assert.equal(JSON.parse(missing.stdout).exists, false);
+
+  // After indexing with a revision, status --target-revision matches.
+  writeFileSync(path.join(cwd, "wiki", "a.md"), "# A\n\nalpha\n", "utf8");
+  run(cwd, ["index", "--source-revision", "rev1"]);
+  const current = run(cwd, ["status", "--json", "--target-revision", "rev1"]);
+  assert.equal(current.status, 0, current.stderr);
+  const currentParsed = JSON.parse(current.stdout);
+  assert.equal(currentParsed.exists, true);
+  assert.equal(currentParsed.upToDate, true);
+  assert.deepEqual(currentParsed.mismatches, []);
+
+  // A different target revision reports drift.
+  const drifted = run(cwd, ["status", "--json", "--target-revision", "rev2"]);
+  const driftedParsed = JSON.parse(drifted.stdout);
+  assert.equal(driftedParsed.upToDate, false);
+  assert.ok(driftedParsed.mismatches.includes("sourceRevision"));
+});
+
+test("validate accepts a good DB and rejects a bad one with exit code 3", () => {
+  const cwd = makeProject();
+  writeFileSync(path.join(cwd, "wiki", "a.md"), "# A\n\nalpha\n", "utf8");
+  run(cwd, ["index"]);
+  const goodDb = path.join(cwd, ".llm-wiki", "index.db");
+
+  const good = run(cwd, ["validate", "--db", goodDb, "--json"]);
+  assert.equal(good.status, 0, good.stderr);
+  const goodParsed = JSON.parse(good.stdout);
+  assert.equal(goodParsed.ok, true);
+  assert.equal(goodParsed.checks.integrity.ok, true);
+  assert.equal(goodParsed.checks.schemaVersion.actual, 3);
+
+  // A non-DB file fails integrity and exits 3.
+  const junk = path.join(cwd, "junk.db");
+  writeFileSync(junk, "this is not sqlite", "utf8");
+  const bad = run(cwd, ["validate", "--db", junk, "--json"]);
+  assert.equal(bad.status, 3);
+});
+
+test("validate --db is required", () => {
+  const cwd = makeProject();
+  const result = run(cwd, ["validate", "--json"]);
+  assert.notEqual(result.status, 0);
+});
+
+test("init renders skill placeholders against the configured content directory", () => {
+  const cwd = makeProject();
+  const writeSkill = path.join(cwd, ".agents", "skills", "kb-write-docs", "SKILL.md");
+  const content = readFileSync(writeSkill, "utf8");
+  // Default include is ["wiki"], so placeholders are replaced.
+  assert.doesNotMatch(content, /\{\{KB_INCLUDE\}\}/);
+  assert.match(content, /Organize documentation under `wiki\/` by business domain/);
+});
+
+function statMtime(file) {
+  return statSync(file).mtimeMs;
+}

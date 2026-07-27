@@ -153,8 +153,23 @@ export function applyBaseSchema(db: Database): void {
     CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
     USING fts5(content, content='chunks', content_rowid='id');
 
-    INSERT INTO schema_meta(key, value) VALUES ('schema_version', '2')
+    -- Index provenance metadata. schema_version is bumped when the schema or
+    -- the metadata contract changes; the other keys record which source the
+    -- index was built from (revision/branch/content dirs) and a hash of the
+    -- index-affecting config so callers (pi-agents) can detect drift without
+    -- parsing logs. Values are upserted by the indexer after each pass.
+    INSERT INTO schema_meta(key, value) VALUES ('schema_version', '3')
     ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+
+    INSERT INTO schema_meta(key, value) VALUES
+      ('source_revision', ''),
+      ('source_branch', ''),
+      ('content_directories', '[]'),
+      ('config_hash', ''),
+      ('built_at', ''),
+      ('file_count', '0'),
+      ('chunk_count', '0')
+    ON CONFLICT(key) DO NOTHING;
 
     INSERT OR IGNORE INTO relation_types(name, display_name, inverse_name, symmetric, core) VALUES
       ('references', 'references', 'referenced_by', 0, 1),

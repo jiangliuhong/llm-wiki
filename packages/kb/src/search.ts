@@ -71,7 +71,7 @@ export function searchKnowledgeBase(query: string, options: SearchRunOptions): S
   }
   const enableVector = options.enableVector ?? false;
   const result: SearchResult = withReadonlyDb(
-    { projectRoot: options.projectRoot, loadVector: enableVector },
+    { projectRoot: options.projectRoot, dbPath: options.dbPath, loadVector: enableVector },
     (conn) => {
       const vectorEnabled = enableVector && conn.vectorEnabled;
       let warning: string | undefined;
@@ -108,6 +108,7 @@ export function searchKnowledgeBase(query: string, options: SearchRunOptions): S
     const seedIds = [...new Set(result.hits.map((hit) => hit.fileId))].slice(0, 5);
     result.graphContext = getGraphSearchContext(seedIds, {
       projectRoot: options.projectRoot,
+      dbPath: options.dbPath,
       loadVector: false,
       perSeedLimit: typeof options.graph === "object" ? options.graph.perSeedLimit : undefined,
     });

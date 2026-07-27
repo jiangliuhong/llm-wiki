@@ -62,16 +62,31 @@ llm-wiki-cli serve
 llm-wiki-cli [options] [command]
 ```
 
-| 选项            | 说明         |
-| --------------- | ------------ |
-| `-h, --help`    | 显示帮助信息 |
-| `-v, --version` | 显示当前版本 |
+| 选项            | 环境变量          | 说明         |
+| --------------- | ----------------- | ------------ |
+| `-h, --help`    |                   | 显示帮助信息 |
+| `-v, --version` |                   | 显示当前版本 |
+| `--root <path>` | `LLM_WIKI_ROOT`   | 知识库根目录，默认为当前目录。决定 `kb.include` 的解析基准与默认 DB 位置 |
+| `--db <path>`   | `LLM_WIKI_DB`     | SQLite 索引文件路径，默认 `<root>/.llm-wiki/index.db` |
+| `--config <path>` | `LLM_WIKI_CONFIG` | 配置文件路径，默认 `<root>/.llm-wiki/config.json` |
+
+全局选项可放在子命令之前，优先级为：命令行标志 > 环境变量 > 默认值。这让编排层（如 pi-agents）可以一次性设置环境变量，在整条流水线中复用，而不必每次重复传参：
+
+```bash
+llm-wiki-cli \
+  --root /path/to/knowledge-worktree \
+  --config /path/to/config.json \
+  --db /path/to/active.db \
+  search "退款规则" --json --read-only
+```
 
 查看某个子命令的帮助：
 
 ```bash
 llm-wiki-cli <command> --help
 ```
+
+> 说明：`llm-wiki-cli` 没有仓库（git）的概念，只有目录的概念。所有 Git/MR/用户确认/索引切换由上层编排服务负责；本工具只负责「给定目录、配置、commit 标识，可靠地生成、验证和查询索引」。
 
 ## 4. `init`：初始化知识库
 
@@ -105,14 +120,20 @@ llm-wiki-cli init --title "研发 Wiki" --port 3100
 ## 5. `index`：建立或更新索引
 
 ```text
-llm-wiki-cli index [--reset]
+llm-wiki-cli index [--reset] [--json] [--source-revision <sha>]
+                   [--source-branch <name>] [--output-db <path>] [--seed-db <path>]
 ```
 
-扫描配置中 `kb.include` 指定的目录，将支持的文件切片后写入 `.llm-wiki/index.db`。
+扫描配置中 `kb.include` 指定的目录，将支持的文件切片后写入索引 DB（默认 `<root>/.llm-wiki/index.db`，可由 `--db` 或 `--output-db` 覆盖）。
 
-| 选项      | 说明                           |
-| --------- | ------------------------------ |
-| `--reset` | 清空已有索引并重新建立全量索引 |
+| 选项                      | 说明                                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| `--reset`                 | 清空已有索引并重新建立全量索引                               |
+| `--json`                  | 输出机器可读的结果对象，便于编排层判断成败与统计             |
+| `--source-revision <sha>` | 记录本次索引对应的来源版本（如合并后的 commit sha），写入索引元数据 |
+| `--source-branch <name>`  | 记录来源分支标签，写入索引元数据                             |
+| `--output-db <path>`      | 在该文件中构建索引，不触碰当前活跃索引；便于编排层校验后原子切换 |
+| `--seed-db <path>`        | 构建前先复制该旧索引再增量更新，加速大型知识库的重建         |
 
 不带 `--reset` 时执行增量索引：
 
@@ -120,6 +141,8 @@ llm-wiki-cli index [--reset]
 - 内容、修改时间或大小发生变化的文件会更新；
 - 未变化的文件会跳过；
 - 已从磁盘删除的文件会从索引中移除。
+
+每次索引完成后，索引 DB 中会写入 provenance 元数据（schema 版本、来源 revision/branch、内容目录、configHash、构建时间、文件数、切片数），供 `status` / `search --json` / `validate` 读取。
 
 支持的文件扩展名：
 
@@ -135,14 +158,39 @@ llm-wiki-cli index
 
 # 修改切片参数、向量维度或索引策略后全量重建
 llm-wiki-cli index --reset
+
+# 在新文件中构建索引（活跃索引不受影响），记录来源 commit
+llm-wiki-cli index \
+  --output-db /path/to/indexes/abc123.tmp.db \
+  --source-revision abc123 \
+  --json
 ```
 
-完成后会输出本次扫描、新增、更新、跳过、删除的文件数以及生成的切片数。
+`--json` 成功输出示例：
+
+```json
+{
+  "ok": true,
+  "db": "/path/to/index.db",
+  "stats": { "scanned": 12, "added": 2, "updated": 0, "skipped": 10, "deleted": 0, "chunks": 18, "vectorEnabled": false },
+  "metadata": {
+    "schemaVersion": 3,
+    "sourceRevision": "abc123",
+    "sourceBranch": "",
+    "contentDirectories": ["wiki"],
+    "configHash": "9f2c...",
+    "builtAt": "2026-07-27T10:00:00.000Z",
+    "fileCount": 12,
+    "chunkCount": 18
+  },
+  "durationMs": 234
+}
+```
 
 ## 6. `search`：在终端检索
 
 ```text
-llm-wiki-cli search <query> [-l, --limit <n>] [--json]
+llm-wiki-cli search <query> [-l, --limit <n>] [--json] [--graph] [--read-only]
 ```
 
 参数与选项：
@@ -152,6 +200,10 @@ llm-wiki-cli search <query> [-l, --limit <n>] [--json]
 | `<query>`         | 必填   | 查询文本；包含空格时应使用引号包裹      |
 | `-l, --limit <n>` | `8`    | 最大结果数，必须为 `1` 到 `50` 的整数  |
 | `--json`          | 关闭   | 输出便于脚本处理的 JSON，不添加终端样式 |
+| `--graph`         | 关闭   | 通过已审核的一跳文档关系扩展结果        |
+| `--read-only`     | 关闭   | 保证不创建或迁移 DB；DB 不存在时返回空结果（exit 0）而非报错 |
+
+`--read-only` 适合编排层在首次索引前探测索引：不会因 DB 缺失而失败，语义上也明确表明本次检索不会产生任何写入。
 
 示例：
 
@@ -186,11 +238,16 @@ JSON 输出的顶层字段包括：
   "query": "配置文件",
   "limit": 8,
   "hits": [],
-  "vectorEnabled": false
+  "vectorEnabled": false,
+  "index": {
+    "schemaVersion": 3,
+    "sourceRevision": "abc123",
+    "builtAt": "2026-07-27T10:00:00.000Z"
+  }
 }
 ```
 
-每个 `hits` 元素包含文件路径、起止行号、原始切片、预览、来源，以及命中方式对应的 `distance` 或 `bm25`。全文检索无法解析查询时，顶层还会包含 `warning`。
+每个 `hits` 元素包含文件路径、起止行号、原始切片、预览、来源，以及命中方式对应的 `distance` 或 `bm25`。全文检索无法解析查询时，顶层还会包含 `warning`。`index` 字段携带本次检索所针对索引的 provenance（来源 commit、构建时间等），便于回答时标注知识来自哪个版本；索引尚无元数据时为 `null`。
 
 脚本调用示例：
 
@@ -198,7 +255,64 @@ JSON 输出的顶层字段包括：
 llm-wiki-cli search "配置文件" --json | jq '.hits[] | {path, startLine, source}'
 ```
 
-## 7. `serve`：启动本地检索网页
+## 7. `status`：查询索引状态
+
+```text
+llm-wiki-cli status [--json] [--target-revision <sha>] [--no-config-check]
+```
+
+报告当前索引 DB 的健康度与 provenance，并判断是否需要重建。专为编排层设计：比较索引记录的 `sourceRevision` 与期望的目标 revision，以及索引记录的 `configHash` 与当前配置的 hash。
+
+| 选项                      | 说明                                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| `--json`                  | 输出机器可读的状态对象                                       |
+| `--target-revision <sha>` | 期望的来源 revision；与索引记录比较，不一致则标记 `mismatches` |
+| `--no-config-check`       | 跳过当前配置 hash 与索引记录的比较                           |
+
+DB 不存在是合法状态（非错误）：输出 `exists: false` 并以 exit 0 退出，调用方据此触发首次构建。
+
+```bash
+# 判断当前索引是否匹配目标分支最新 commit
+llm-wiki-cli status --json --target-revision "$MERGED_SHA"
+```
+
+输出示例（DB 存在但 revision 不匹配）：
+
+```json
+{
+  "ok": true,
+  "db": "/path/to/index.db",
+  "exists": true,
+  "metadata": { "sourceRevision": "oldsha", "configHash": "...", "builtAt": "..." },
+  "stats": { "files": 12, "chunks": 18, "tablesOk": true, "vectorEnabled": false },
+  "upToDate": false,
+  "configMatches": true,
+  "mismatches": ["sourceRevision"]
+}
+```
+
+## 8. `validate`：校验候选索引
+
+```text
+llm-wiki-cli validate --db <path> [--json]
+```
+
+在编排层把候选索引切换为正式索引之前，检查其完整性。`--db` 必填：validate 总是检查一个显式文件（通常是刚 `index --output-db` 产生的临时 DB）。
+
+检查项：
+
+- `PRAGMA integrity_check`（SQLite 物理一致性）
+- 必需基础表（`files` / `chunks` / `chunks_fts`）存在
+- `schema_version` 与当前代码期望值（`3`）一致
+- 行数统计（files / chunks / fts）
+
+任一检查失败则以退出码 `3`（DB）退出，调用方可据此把原子切换的闸门建立在一次干净的 validate 上。
+
+```bash
+llm-wiki-cli validate --db /path/to/indexes/abc123.tmp.db --json
+```
+
+## 9. `serve`：启动本地检索网页
 
 ```text
 llm-wiki-cli serve [-p, --port <port>] [--prod]
@@ -225,7 +339,7 @@ llm-wiki-cli serve --prod
 
 服务启动后可在网页中搜索、查看结果来源、打开文件内容，以及检查索引文件数、切片数和向量状态。按 `Ctrl+C` 停止服务。
 
-## 8. 配置文件
+## 10. 配置文件
 
 配置文件位于知识库根目录下的 `.llm-wiki/config.json`。默认内容如下：
 
@@ -267,7 +381,7 @@ llm-wiki-cli serve --prod
 llm-wiki-cli index --reset
 ```
 
-## 9. 推荐工作流
+## 11. 推荐工作流
 
 日常维护知识库：
 
@@ -287,7 +401,45 @@ result="$(llm-wiki-cli search "发布检查" --limit 5 --json)"
 printf '%s\n' "$result" | jq -e '.hits | length > 0'
 ```
 
-## 10. 常见问题
+## 12. 常见问题
+
+### 退出码与 JSON 错误协议
+
+`llm-wiki-cli` 使用稳定的退出码，便于编排层判断失败类别：
+
+| 退出码 | 含义                                             |
+| ------ | ------------------------------------------------ |
+| `0`    | 成功（包括 `status` 报告 DB 不存在、`search --read-only` 空库） |
+| `1`    | 未预期的内部错误（兜底）                         |
+| `2`    | 配置问题：文件缺失、JSON 非法、校验失败         |
+| `3`    | 数据库/索引问题：无法打开、损坏、busy、schema 不匹配、validate 失败 |
+| `4`    | 参数问题：非法 flag 值、空查询、limit 越界       |
+
+当命令以 `--json` 调用且失败时，stderr 会输出结构化错误对象，stdout 不产生成功体：
+
+```json
+{ "error": { "code": "CONFIG_ENOENT", "message": "Config file not found at ..." } }
+```
+
+`code` 是稳定的机器可读字符串（如 `CONFIG_ENOENT`、`DB_INDEX_FAILED`、`DB_OPEN_FAILED`、`DB_VALIDATE_FAILED`、`DB_QUERY_FAILED`、`ARGS_EMPTY_QUERY`）；更细粒度的原因在 `message` 中，供人类阅读但不应作为程序分支依据。
+
+### 编排层（pi-agents）集成示例
+
+```bash
+# 1. 在 worktree 中构建新索引（不碰活跃索引）
+llm-wiki-cli --root /worktree --db /srv/active.db \
+  index --output-db /srv/indexes/$SHA.tmp.db --source-revision "$SHA" --json
+
+# 2. 校验候选索引
+llm-wiki-cli validate --db /srv/indexes/$SHA.tmp.db --json
+
+# 3. 原子切换 active.db（由编排层负责，非本工具）
+
+# 4. 只读检索，标注来源 commit
+llm-wiki-cli --db /srv/active.db search "退款规则" --json --read-only
+```
+
+### 提示找不到配置文件
 
 ### 提示找不到配置文件
 
