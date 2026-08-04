@@ -1,6 +1,7 @@
 import nodePath from "node:path";
 import { resolveDbPath } from "@llm-wiki/kb";
 import { WIKI_DIR_NAME, CONFIG_FILE_NAME } from "../types/config.js";
+import { resolveRegistryEntry } from "./registry.js";
 
 /**
  * Global options that every subcommand inherits.
@@ -22,10 +23,13 @@ export const ENV = {
   root: "LLM_WIKI_ROOT",
   db: "LLM_WIKI_DB",
   config: "LLM_WIKI_CONFIG",
+  kb: "LLM_WIKI_KB",
 } as const;
 
 /** Resolved global context shared by all subcommands. */
 export interface GlobalContext {
+  /** Registered id, when the context came from --kb. */
+  kbId?: string;
   /** Absolute knowledge-base root directory. */
   root: string;
   /** Absolute SQLite DB path (explicit or derived from `root`). */
@@ -39,6 +43,7 @@ export interface RawGlobalOptions {
   root?: string;
   db?: string;
   config?: string;
+  kb?: string;
 }
 
 /**
@@ -48,13 +53,20 @@ export interface RawGlobalOptions {
  * `<root>/.llm-wiki/config.json` respectively.
  */
 export function resolveGlobalOptions(raw: RawGlobalOptions = {}): GlobalContext {
-  const root = resolveAbsolute(raw.root, process.env[ENV.root], process.cwd());
+  const kbId = raw.kb ?? process.env[ENV.kb];
+  const registered = kbId ? resolveRegistryEntry(kbId) : undefined;
+  const root = resolveAbsolute(raw.root, process.env[ENV.root], registered?.root ?? process.cwd());
   const dbOverride = raw.db ?? process.env[ENV.db];
   const configOverride = raw.config ?? process.env[ENV.config];
   return {
+    kbId,
     root,
-    dbPath: resolveDbPath(root, dbOverride),
-    configPath: resolveConfigPath(root, configOverride),
+    dbPath: dbOverride
+      ? resolveDbPath(root, dbOverride)
+      : (registered?.dbPath ?? resolveDbPath(root)),
+    configPath: configOverride
+      ? resolveConfigPath(root, configOverride)
+      : (registered?.configPath ?? resolveConfigPath(root)),
   };
 }
 
@@ -68,7 +80,11 @@ export function resolveConfigPath(root: string, configOverride?: string): string
   return nodePath.resolve(root, WIKI_DIR_NAME, CONFIG_FILE_NAME);
 }
 
-function resolveAbsolute(flag: string | undefined, env: string | undefined, fallback: string): string {
+function resolveAbsolute(
+  flag: string | undefined,
+  env: string | undefined,
+  fallback: string,
+): string {
   const value = flag ?? env;
   if (!value || value.length === 0) return fallback;
   return nodePath.isAbsolute(value) ? value : nodePath.resolve(process.cwd(), value);

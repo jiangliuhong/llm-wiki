@@ -7,9 +7,11 @@ import type { DocumentNeighborhood, DocumentRelation } from "@llm-wiki/kb";
 export default function RelationPanel({
   graph,
   embedded = false,
+  kbId = "default",
 }: {
   graph: DocumentNeighborhood;
   embedded?: boolean;
+  kbId?: string;
 }): React.ReactElement {
   const types = useMemo(
     () => [...new Set(graph.relations.map((relation) => relation.relationType))],
@@ -49,8 +51,18 @@ export default function RelationPanel({
         <p className="mt-4 text-xs leading-5 text-slate-400">No published document relations.</p>
       ) : (
         <>
-          <RelationGroup title="Upstream" relations={incoming} centerId={graph.center.fileId} />
-          <RelationGroup title="Downstream" relations={outgoing} centerId={graph.center.fileId} />
+          <RelationGroup
+            title="Upstream"
+            relations={incoming}
+            centerId={graph.center.fileId}
+            kbId={kbId}
+          />
+          <RelationGroup
+            title="Downstream"
+            relations={outgoing}
+            centerId={graph.center.fileId}
+            kbId={kbId}
+          />
           <details className="mt-5 rounded-xl border border-slate-200 bg-white p-3">
             <summary className="cursor-pointer text-xs font-semibold text-indigo-700">
               Local graph
@@ -63,6 +75,7 @@ export default function RelationPanel({
                     id={r.sourceFileId}
                     title={r.sourceTitle}
                     type={r.relationType}
+                    kbId={kbId}
                   />
                 ))}
               </div>
@@ -76,6 +89,7 @@ export default function RelationPanel({
                     id={r.targetFileId}
                     title={r.targetTitle}
                     type={r.relationType}
+                    kbId={kbId}
                   />
                 ))}
               </div>
@@ -102,7 +116,7 @@ export default function RelationPanel({
             {graph.tagRelated.map((node) => (
               <li key={node.fileId}>
                 <Link
-                  href={`/files/${node.fileId}`}
+                  href={`/kbs/${encodeURIComponent(kbId)}/files/${node.fileId}`}
                   className="block rounded-lg bg-slate-50 p-2 text-xs text-indigo-700 hover:underline"
                 >
                   {node.title}
@@ -123,10 +137,12 @@ function RelationGroup({
   title,
   relations,
   centerId,
+  kbId,
 }: {
   title: string;
   relations: DocumentRelation[];
   centerId: number;
+  kbId: string;
 }): React.ReactElement | null {
   if (!relations.length) return null;
   return (
@@ -141,7 +157,7 @@ function RelationGroup({
           return (
             <li key={relation.id} className="rounded-lg border border-slate-100 bg-white p-2">
               <Link
-                href={`/files/${id}`}
+                href={`/kbs/${encodeURIComponent(kbId)}/files/${id}`}
                 className="block truncate text-xs font-medium text-indigo-700 hover:underline"
               >
                 {path}
@@ -167,14 +183,16 @@ function GraphNode({
   id,
   title,
   type,
+  kbId,
 }: {
   id: number;
   title: string;
   type: string;
+  kbId: string;
 }): React.ReactElement {
   return (
     <Link
-      href={`/files/${id}`}
+      href={`/kbs/${encodeURIComponent(kbId)}/files/${id}`}
       title={type}
       className="block rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-center text-slate-600 hover:border-indigo-300"
     >

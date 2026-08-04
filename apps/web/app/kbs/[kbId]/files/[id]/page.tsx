@@ -5,32 +5,25 @@ import TableOfContents from "@/components/TableOfContents";
 import RelationPanel from "@/components/RelationPanel";
 import { loadKbContext } from "@/app/api/_lib/kb-config";
 
-/**
- * Document viewer route: `/files/[id]`.
- *
- * Reads the file's full content server-side (the web app shares the KB
- * package, which opens a read-only SQLite connection in-process), then
- * renders the markdown in the center panel and a table of contents on the
- * right. The layout already provides the top nav + file tree.
- */
-export default async function FilePage({
+export default async function KnowledgeBaseFilePage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ kbId: string; id: string }>;
 }): Promise<React.ReactElement> {
-  const { id } = await params;
+  const { kbId, id } = await params;
   const fileId = Number.parseInt(id, 10);
   if (!Number.isFinite(fileId) || fileId <= 0) notFound();
-
-  const context = loadKbContext();
-  const dbOptions = { projectRoot: context.root, dbPath: context.dbPath };
-  const content = getFileContent(fileId, dbOptions);
+  let context;
+  try {
+    context = loadKbContext(kbId);
+  } catch {
+    notFound();
+  }
+  const db = { projectRoot: context.root, dbPath: context.dbPath };
+  const content = getFileContent(fileId, db);
   if (!content) notFound();
-
-  // indexedAt lives on the file-detail row; fetch cheaply for the header.
-  const detail = getFileDetail(fileId, dbOptions);
-  const indexedAt = detail?.file.indexedAt ?? null;
-  const graph = getDocumentNeighborhood(fileId, 1, dbOptions);
+  const detail = getFileDetail(fileId, db);
+  const graph = getDocumentNeighborhood(fileId, 1, db);
 
   return (
     <div className="flex h-full min-h-0 overflow-hidden">
@@ -38,12 +31,12 @@ export default async function FilePage({
         <DocContent
           path={content.path}
           language={content.language}
-          indexedAt={indexedAt}
+          indexedAt={detail?.file.indexedAt ?? null}
           content={content.content}
         />
         {graph ? (
           <div className="border-t border-slate-200 xl:hidden">
-            <RelationPanel graph={graph} embedded />
+            <RelationPanel graph={graph} embedded kbId={kbId} />
           </div>
         ) : null}
       </div>
@@ -53,7 +46,7 @@ export default async function FilePage({
         </div>
         {graph ? (
           <div className="min-h-0 flex-1 border-t border-slate-200">
-            <RelationPanel graph={graph} />
+            <RelationPanel graph={graph} kbId={kbId} />
           </div>
         ) : null}
       </aside>

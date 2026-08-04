@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getKbStats } from "@llm-wiki/kb";
-import { loadEmbeddingConfig } from "../../_lib/kb-config";
+import { loadKbContext } from "../../_lib/kb-config";
 
 // Native SQLite addons cannot run in the Edge runtime.
 export const runtime = "nodejs";
@@ -14,12 +14,14 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(): Promise<Response> {
   try {
-    const stats = getKbStats({ loadVector: loadEmbeddingConfig().enabled });
+    const context = loadKbContext();
+    const stats = getKbStats({
+      projectRoot: context.root,
+      dbPath: context.dbPath,
+      loadVector: context.enabled,
+    });
     return NextResponse.json(stats);
   } catch (err) {
-    return NextResponse.json(
-      { error: (err as Error).message },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
 }

@@ -1,10 +1,12 @@
 import { Command } from "commander";
-import { ConfigError, loadConfig } from "../utils/config.js";
+import { ConfigError, loadConfigFromPath } from "../utils/config.js";
 import type { WikiConfig } from "../types/config.js";
 import { startNextServer } from "../services/next-server.js";
 import { logger } from "../utils/logger.js";
 import { closeConnection, initSchema, openDatabase } from "@llm-wiki/kb";
 import { resolveKbConfig } from "../utils/kb-config.js";
+import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-options.js";
+import { getRegistryPath, loadRegistry } from "../utils/registry.js";
 
 /**
  * `llm-wiki-cli serve`
@@ -21,8 +23,9 @@ export function makeServeCommand(): Command {
       parsePort(value),
     )
     .option("--prod", "Run the built app instead of dev mode", false)
-    .action(async (options: ServeOptions) => {
-      await runServe(options);
+    .option("--all", "Serve every registered knowledge base", false)
+    .action(async (options: ServeOptions, cmd: Command) => {
+      await runServe(options, cmd);
     });
 
   return command;
@@ -31,12 +34,18 @@ export function makeServeCommand(): Command {
 interface ServeOptions {
   port?: number;
   prod?: boolean;
+  all?: boolean;
 }
 
-async function runServe(options: ServeOptions): Promise<void> {
+async function runServe(options: ServeOptions, cmd: Command): Promise<void> {
+  if (options.all) {
+    await runServeAll(options);
+    return;
+  }
+  const ctx = resolveGlobalOptions(cmd.optsWithGlobals() as RawGlobalOptions);
   let config: WikiConfig;
   try {
-    config = loadConfig();
+    config = loadConfigFromPath(ctx.configPath);
   } catch (err) {
     if (err instanceof ConfigError) {
       logger.error(err.message);
@@ -52,18 +61,60 @@ async function runServe(options: ServeOptions): Promise<void> {
   }
 
   try {
-    migrateKbSchema(config);
-    await startNextServer({ config, dev: !options.prod });
+    migrateKbSchema(config, ctx.root, ctx.dbPath);
+    await startNextServer({
+      config,
+      context: ctx,
+      knowledgeBases: [{ config, context: ctx }],
+      dev: !options.prod,
+    });
   } catch (err) {
     logger.error((err as Error).message);
     process.exitCode = 1;
   }
 }
 
+async function runServeAll(options: ServeOptions): Promise<void> {
+  const registry = loadRegistry();
+  const entries = Object.entries(registry.knowledgeBases);
+  if (entries.length === 0) {
+    logger.error('No registered knowledge bases. Run "llm-wiki-cli kb add <id> <root>" first.');
+    process.exitCode = 1;
+    return;
+  }
+  const knowledgeBases = entries.map(([kbId, entry]) => {
+    const config = loadConfigFromPath(entry.configPath);
+    const context = {
+      kbId,
+      root: entry.root,
+      configPath: entry.configPath,
+      dbPath: entry.dbPath,
+    };
+    migrateKbSchema(config, context.root, context.dbPath);
+    return { config, context };
+  });
+  const primary =
+    knowledgeBases.find((item) => item.context.kbId === registry.defaultKb) ?? knowledgeBases[0];
+  if (!primary) return;
+  const config =
+    options.port === undefined ? primary.config : { ...primary.config, port: options.port };
+  await startNextServer({
+    config,
+    context: primary.context,
+    knowledgeBases,
+    registryPath: getRegistryPath(),
+    dev: !options.prod,
+  });
+}
+
 /** Applies additive base-schema migrations before the read-only Web app starts. */
-export function migrateKbSchema(config: WikiConfig, projectRoot: string = process.cwd()): void {
+export function migrateKbSchema(
+  config: WikiConfig,
+  projectRoot: string = process.cwd(),
+  dbPath?: string,
+): void {
   const kb = resolveKbConfig(config);
-  const conn = openDatabase({ projectRoot, loadVector: false });
+  const conn = openDatabase({ projectRoot, dbPath, loadVector: false });
   try {
     initSchema(conn, kb.embedding.dimensions);
   } finally {

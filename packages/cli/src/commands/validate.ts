@@ -9,6 +9,7 @@ import {
 } from "@llm-wiki/kb";
 import { logger } from "../utils/logger.js";
 import { ExitCode } from "../utils/errors.js";
+import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-options.js";
 
 /**
  * `llm-wiki-cli validate --db <path> [--json]`
@@ -53,16 +54,17 @@ function runValidate(options: ValidateOptions, cmd: Command): void {
   // --db is the global option (shared with the rest of the CLI); validate
   // always inspects an explicit DB rather than the active index, so we require
   // it and emit a structured JSON error when missing.
-  const dbPath = cmd.optsWithGlobals().db as string | undefined;
-  if (!dbPath || dbPath.length === 0) {
+  const raw = cmd.optsWithGlobals() as RawGlobalOptions;
+  if ((!raw.db || raw.db.length === 0) && (!raw.kb || raw.kb.length === 0)) {
     process.stderr.write(
       JSON.stringify({
-        error: { code: "ARGS_DB_REQUIRED", message: "validate requires --db <path>" },
+        error: { code: "ARGS_DB_REQUIRED", message: "validate requires --db <path> or --kb <id>" },
       }) + "\n",
     );
     process.exitCode = 4; // EXIT_ARGS
     return;
   }
+  const dbPath = resolveGlobalOptions(raw).dbPath;
 
   let conn: KbConnection | null = null;
   const checks: ValidateChecks = {
@@ -108,7 +110,9 @@ function runValidate(options: ValidateOptions, cmd: Command): void {
     const message = `Validation failed: ${(err as Error).message}`;
     if (json) {
       // Still emit the partial checks so the caller can see how far we got.
-      process.stderr.write(JSON.stringify({ error: { code: "DB_VALIDATE_FAILED", message } }) + "\n");
+      process.stderr.write(
+        JSON.stringify({ error: { code: "DB_VALIDATE_FAILED", message } }) + "\n",
+      );
       process.stdout.write(JSON.stringify({ ok: false, db: dbPath, checks }, null, 2) + "\n");
     } else {
       logger.error(message);

@@ -4,12 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import {
-  closeConnection,
-  getDefaultKbConfig,
-  indexFiles,
-  openDatabase,
-} from "@llm-wiki/kb";
+import { closeConnection, getDefaultKbConfig, indexFiles, openDatabase } from "@llm-wiki/kb";
 import { migrateKbSchema } from "../dist/commands/serve.js";
 
 const cli = path.resolve("dist/index.js");
@@ -21,11 +16,11 @@ function makeProject() {
   return cwd;
 }
 
-function run(cwd, args) {
+function run(cwd, args, extraEnv = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, NO_COLOR: "1" },
+    env: { ...process.env, NO_COLOR: "1", ...extraEnv },
   });
 }
 
@@ -186,11 +181,7 @@ test("--root points the CLI at a knowledge base outside the cwd", () => {
   assert.equal(existsSync(path.join(root, ".llm-wiki", "config.json")), true);
   assert.equal(existsSync(path.join(root, "wiki")), true);
 
-  writeFileSync(
-    path.join(root, "wiki", "note.md"),
-    "# Note\n\nA refund rule document.\n",
-    "utf8",
-  );
+  writeFileSync(path.join(root, "wiki", "note.md"), "# Note\n\nA refund rule document.\n", "utf8");
   const indexed = run(tmpdir(), ["--root", root, "index"]);
   assert.equal(indexed.status, 0, indexed.stderr);
   assert.equal(existsSync(path.join(root, ".llm-wiki", "index.db")), true);
@@ -199,7 +190,14 @@ test("--root points the CLI at a knowledge base outside the cwd", () => {
 test("index --json --source-revision records provenance metadata", () => {
   const cwd = makeProject();
   writeFileSync(path.join(cwd, "wiki", "a.md"), "# A\n\nalpha content\n", "utf8");
-  const result = run(cwd, ["index", "--json", "--source-revision", "deadbeef", "--source-branch", "knowledge"]);
+  const result = run(cwd, [
+    "index",
+    "--json",
+    "--source-revision",
+    "deadbeef",
+    "--source-branch",
+    "knowledge",
+  ]);
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.ok, true);
@@ -305,6 +303,56 @@ test("init renders skill placeholders against the configured content directory",
   // Default include is ["wiki"], so placeholders are replaced.
   assert.doesNotMatch(content, /\{\{KB_INCLUDE\}\}/);
   assert.match(content, /Organize documentation under `wiki\/` by business domain/);
+});
+
+test("kb registry resolves commands from any working directory and keeps indexes isolated", () => {
+  const alpha = makeProject();
+  const beta = makeProject();
+  writeFileSync(path.join(alpha, "wiki", "alpha.md"), "# Alpha\n\nalphauniqueword\n", "utf8");
+  writeFileSync(path.join(beta, "wiki", "beta.md"), "# Beta\n\nbetauniqueword\n", "utf8");
+  run(alpha, ["index"]);
+  run(beta, ["index"]);
+
+  const registryDir = mkdtempSync(path.join(tmpdir(), "llm-wiki-registry-test-"));
+  const registryPath = path.join(registryDir, "registry.json");
+  const env = { LLM_WIKI_REGISTRY: registryPath };
+  const addAlpha = run(tmpdir(), ["kb", "add", "alpha", alpha], env);
+  const addBeta = run(tmpdir(), ["kb", "add", "beta", beta], env);
+  assert.equal(addAlpha.status, 0, addAlpha.stderr);
+  assert.equal(addBeta.status, 0, addBeta.stderr);
+
+  const alphaSearch = run(tmpdir(), ["--kb", "alpha", "search", "alphauniqueword", "--json"], env);
+  assert.equal(alphaSearch.status, 0, alphaSearch.stderr);
+  assert.ok(JSON.parse(alphaSearch.stdout).hits.some((hit) => hit.path === "wiki/alpha.md"));
+
+  const isolated = run(tmpdir(), ["--kb", "beta", "search", "alphauniqueword", "--json"], env);
+  assert.equal(isolated.status, 0, isolated.stderr);
+  assert.equal(JSON.parse(isolated.stdout).hits.length, 0);
+
+  const validate = run(tmpdir(), ["--kb", "alpha", "validate", "--json"], env);
+  assert.equal(validate.status, 0, validate.stderr);
+  assert.equal(JSON.parse(validate.stdout).ok, true);
+});
+
+test("kb list/default/remove manage registry metadata without deleting knowledge-base files", () => {
+  const root = makeProject();
+  const registryDir = mkdtempSync(path.join(tmpdir(), "llm-wiki-registry-test-"));
+  const env = { LLM_WIKI_REGISTRY: path.join(registryDir, "registry.json") };
+  assert.equal(run(tmpdir(), ["kb", "add", "docs", root], env).status, 0);
+  assert.equal(run(tmpdir(), ["kb", "default", "docs"], env).status, 0);
+
+  const listed = run(tmpdir(), ["kb", "list", "--json"], env);
+  assert.equal(listed.status, 0, listed.stderr);
+  const registry = JSON.parse(listed.stdout);
+  assert.equal(registry.defaultKb, "docs");
+  assert.equal(registry.knowledgeBases.docs.root, root);
+
+  const removed = run(tmpdir(), ["kb", "remove", "docs"], env);
+  assert.equal(removed.status, 0, removed.stderr);
+  assert.equal(existsSync(path.join(root, ".llm-wiki", "config.json")), true);
+  const after = JSON.parse(run(tmpdir(), ["kb", "list", "--json"], env).stdout);
+  assert.deepEqual(after.knowledgeBases, {});
+  assert.equal(after.defaultKb, undefined);
 });
 
 function statMtime(file) {

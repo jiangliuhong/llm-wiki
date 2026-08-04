@@ -4,7 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { DocumentRelation, RelationProposal, RelationProposalStatus } from "@llm-wiki/kb";
 
-export default function RelationReviewPage(): React.ReactElement {
+export default function RelationReviewPage({
+  kbId = "default",
+}: { kbId?: string } = {}): React.ReactElement {
   const [status, setStatus] = useState<RelationProposalStatus>("pending");
   const [proposals, setProposals] = useState<RelationProposal[]>([]);
   const [conflicts, setConflicts] = useState<Set<number>>(new Set());
@@ -13,7 +15,8 @@ export default function RelationReviewPage(): React.ReactElement {
 
   const load = useCallback(async (): Promise<void> => {
     setError(null);
-    const response = await fetch(`/api/kb/relations/proposals?status=${status}`);
+    const apiBase = `/api/kbs/${encodeURIComponent(kbId)}`;
+    const response = await fetch(`${apiBase}/relations/proposals?status=${status}`);
     const data = (await response.json()) as RelationProposal[] | { error: string };
     if (!response.ok || "error" in data)
       throw new Error("error" in data ? data.error : "Failed to load proposals.");
@@ -23,14 +26,14 @@ export default function RelationReviewPage(): React.ReactElement {
       data.map(async (proposal) => {
         if (!proposal.sourceFileId || !proposal.targetFileId) return;
         const relations = (await fetch(
-          `/api/kb/files/${proposal.sourceFileId}/relations?direction=outgoing&type=${encodeURIComponent(proposal.relationType)}`,
+          `${apiBase}/files/${proposal.sourceFileId}/relations?direction=outgoing&type=${encodeURIComponent(proposal.relationType)}`,
         ).then((r) => r.json())) as DocumentRelation[];
         if (relations.some((relation) => relation.targetFileId === proposal.targetFileId))
           nextConflicts.add(proposal.id);
       }),
     );
     setConflicts(nextConflicts);
-  }, [status]);
+  }, [status, kbId]);
 
   useEffect(() => {
     load().catch((reason: Error) => setError(reason.message));
@@ -39,11 +42,14 @@ export default function RelationReviewPage(): React.ReactElement {
   const review = async (id: number, action: "approve" | "reject"): Promise<void> => {
     setBusy(id);
     try {
-      const response = await fetch(`/api/kb/relations/proposals/${id}/${action}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
+      const response = await fetch(
+        `/api/kbs/${encodeURIComponent(kbId)}/relations/proposals/${id}/${action}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        },
+      );
       const data = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(data.error ?? `Failed to ${action} proposal.`);
       await load();
@@ -92,12 +98,12 @@ export default function RelationReviewPage(): React.ReactElement {
                 className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
               >
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <DocLink id={proposal.sourceFileId} path={proposal.sourcePath} />
+                  <DocLink id={proposal.sourceFileId} path={proposal.sourcePath} kbId={kbId} />
                   <span className="rounded-full bg-indigo-50 px-2 py-1 font-mono text-xs text-indigo-700">
                     {proposal.relationType}
                   </span>
                   <span aria-hidden>→</span>
-                  <DocLink id={proposal.targetFileId} path={proposal.targetPath} />
+                  <DocLink id={proposal.targetFileId} path={proposal.targetPath} kbId={kbId} />
                 </div>
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
                   <div>
@@ -160,9 +166,20 @@ export default function RelationReviewPage(): React.ReactElement {
   );
 }
 
-function DocLink({ id, path }: { id: number | null; path: string }): React.ReactElement {
+function DocLink({
+  id,
+  path,
+  kbId,
+}: {
+  id: number | null;
+  path: string;
+  kbId: string;
+}): React.ReactElement {
   return id ? (
-    <Link href={`/files/${id}`} className="font-medium text-indigo-700 hover:underline">
+    <Link
+      href={`/kbs/${encodeURIComponent(kbId)}/files/${id}`}
+      className="font-medium text-indigo-700 hover:underline"
+    >
       {path}
     </Link>
   ) : (

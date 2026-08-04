@@ -13,7 +13,13 @@ import type { SearchHit, SearchResult } from "@llm-wiki/kb";
  * to the file's doc view; the search leg is kept identical to the old
  * single-page search UI.
  */
-export default function SearchResults({ query }: { query: string }): React.ReactElement {
+export default function SearchResults({
+  query,
+  kbId,
+}: {
+  query: string;
+  kbId: string;
+}): React.ReactElement {
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +28,7 @@ export default function SearchResults({ query }: { query: string }): React.React
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`/api/kb/search?q=${encodeURIComponent(query)}`)
+    fetch(`/api/kbs/${encodeURIComponent(kbId)}/search?q=${encodeURIComponent(query)}`)
       .then((r) => r.json())
       .then((data: SearchResult | { error: string }) => {
         if (cancelled) return;
@@ -38,7 +44,7 @@ export default function SearchResults({ query }: { query: string }): React.React
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [query, kbId]);
 
   if (loading) {
     return <p className="px-6 py-16 text-center text-slate-400">Searching…</p>;
@@ -69,7 +75,7 @@ export default function SearchResults({ query }: { query: string }): React.React
       <ul className="mt-7 flex flex-col gap-4">
         {result.hits.map((hit) => (
           <li key={hit.chunkId}>
-            <HitCard hit={hit} />
+            <HitCard hit={hit} kbId={kbId} />
           </li>
         ))}
       </ul>
@@ -85,7 +91,7 @@ export default function SearchResults({ query }: { query: string }): React.React
                 className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3"
               >
                 <Link
-                  href={`/files/${item.relatedFileId}`}
+                  href={`/kbs/${encodeURIComponent(kbId)}/files/${item.relatedFileId}`}
                   className="text-sm font-medium text-indigo-700 hover:underline"
                 >
                   {item.relatedTitle}
@@ -102,7 +108,7 @@ export default function SearchResults({ query }: { query: string }): React.React
   );
 }
 
-function HitCard({ hit }: { hit: SearchHit }): React.ReactElement {
+function HitCard({ hit, kbId }: { hit: SearchHit; kbId: string }): React.ReactElement {
   const color =
     hit.source === "vector+fts" ? "success" : hit.source === "fts" ? "accent" : "default";
   return (
@@ -110,7 +116,7 @@ function HitCard({ hit }: { hit: SearchHit }): React.ReactElement {
       <Card.Content className="flex flex-col gap-3 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <Link
-            href={`/files/${hit.fileId}`}
+            href={`/kbs/${encodeURIComponent(kbId)}/files/${hit.fileId}`}
             className="font-mono text-sm font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
           >
             {hit.path}

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getChunkDetail } from "@llm-wiki/kb";
+import { loadKbContext } from "../../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,8 @@ export async function GET(
   }
 
   try {
-    const chunk = getChunkDetail(chunkId);
+    const context = loadKbContext();
+    const chunk = getChunkDetail(chunkId, { projectRoot: context.root, dbPath: context.dbPath });
     if (!chunk) {
       return NextResponse.json({ error: "Chunk not found." }, { status: 404 });
     }

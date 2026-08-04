@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { rejectRelationProposal } from "@llm-wiki/kb";
 import { guardSameOriginJson } from "../../../../../_lib/mutation-guard";
+import { loadKbContext } from "../../../../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,10 @@ export async function POST(
   if (!Number.isInteger(id) || id <= 0)
     return NextResponse.json({ error: "Proposal id must be a positive integer." }, { status: 400 });
   try {
-    return NextResponse.json(rejectRelationProposal(id));
+    const context = loadKbContext();
+    return NextResponse.json(
+      rejectRelationProposal(id, { projectRoot: context.root, dbPath: context.dbPath }),
+    );
   } catch (error) {
     return NextResponse.json({ error: (error as Error).message }, { status: 409 });
   }

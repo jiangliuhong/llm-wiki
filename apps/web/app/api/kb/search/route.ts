@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { MAX_SEARCH_LIMIT, searchKnowledgeBase } from "@llm-wiki/kb";
-import { loadEmbeddingConfig } from "../../_lib/kb-config";
+import { loadKbContext } from "../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,10 +38,12 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const embedding = loadEmbeddingConfig();
+    const context = loadKbContext();
     const result = searchKnowledgeBase(q, {
-      dimensions: embedding.dimensions,
-      enableVector: embedding.enabled,
+      projectRoot: context.root,
+      dbPath: context.dbPath,
+      dimensions: context.dimensions,
+      enableVector: context.enabled,
       limit,
       graph: { enabled: true, perSeedLimit: 3 },
     });

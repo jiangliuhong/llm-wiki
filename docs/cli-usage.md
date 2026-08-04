@@ -54,7 +54,7 @@ llm-wiki-cli serve
 
 默认网页地址为 <http://localhost:3000>。
 
-> 所有项目路径都相对于执行命令时的当前目录解析。应先进入包含 `.llm-wiki/config.json` 的知识库根目录，再运行 `index`、`search` 或 `serve`。
+> 兼容模式下路径相对于当前目录解析；也可以使用 `--root` 或注册后的 `--kb <id>`，无需先切换到知识库目录。
 
 ## 3. 全局选项
 
@@ -62,13 +62,14 @@ llm-wiki-cli serve
 llm-wiki-cli [options] [command]
 ```
 
-| 选项            | 环境变量          | 说明         |
-| --------------- | ----------------- | ------------ |
-| `-h, --help`    |                   | 显示帮助信息 |
-| `-v, --version` |                   | 显示当前版本 |
-| `--root <path>` | `LLM_WIKI_ROOT`   | 知识库根目录，默认为当前目录。决定 `kb.include` 的解析基准与默认 DB 位置 |
-| `--db <path>`   | `LLM_WIKI_DB`     | SQLite 索引文件路径，默认 `<root>/.llm-wiki/index.db` |
-| `--config <path>` | `LLM_WIKI_CONFIG` | 配置文件路径，默认 `<root>/.llm-wiki/config.json` |
+| 选项              | 环境变量          | 说明                                                                     |
+| ----------------- | ----------------- | ------------------------------------------------------------------------ |
+| `-h, --help`      |                   | 显示帮助信息                                                             |
+| `-v, --version`   |                   | 显示当前版本                                                             |
+| `--kb <id>`       | `LLM_WIKI_KB`     | 使用全局注册表中的知识库 ID                                              |
+| `--root <path>`   | `LLM_WIKI_ROOT`   | 知识库根目录，默认为当前目录。决定 `kb.include` 的解析基准与默认 DB 位置 |
+| `--db <path>`     | `LLM_WIKI_DB`     | SQLite 索引文件路径，默认 `<root>/.llm-wiki/index.db`                    |
+| `--config <path>` | `LLM_WIKI_CONFIG` | 配置文件路径，默认 `<root>/.llm-wiki/config.json`                        |
 
 全局选项可放在子命令之前，优先级为：命令行标志 > 环境变量 > 默认值。这让编排层（如 pi-agents）可以一次性设置环境变量，在整条流水线中复用，而不必每次重复传参：
 
@@ -87,6 +88,33 @@ llm-wiki-cli <command> --help
 ```
 
 > 说明：`llm-wiki-cli` 没有仓库（git）的概念，只有目录的概念。所有 Git/MR/用户确认/索引切换由上层编排服务负责；本工具只负责「给定目录、配置、commit 标识，可靠地生成、验证和查询索引」。
+
+### 3.1 全局知识库注册表
+
+注册表默认位于 `$XDG_CONFIG_HOME/llm-wiki/registry.json`，未设置
+`XDG_CONFIG_HOME` 时位于 `~/.config/llm-wiki/registry.json`。可通过
+`LLM_WIKI_REGISTRY` 指定其他文件，适合测试和隔离环境。
+
+```bash
+llm-wiki-cli kb add backend /path/to/backend
+llm-wiki-cli kb add product /path/to/product
+llm-wiki-cli kb list
+llm-wiki-cli kb show backend
+llm-wiki-cli kb default backend
+llm-wiki-cli kb remove product
+```
+
+`kb add` 只注册已经初始化的知识库，不移动文档或数据库。`kb remove` 也只删除注册信息，
+不会删除项目中的 `.llm-wiki`、索引或文档。注册后可从任意目录运行：
+
+```bash
+llm-wiki-cli --kb backend index
+llm-wiki-cli --kb backend search "部署流程"
+llm-wiki-cli --kb backend status --json
+```
+
+显式的 `--root`、`--db`、`--config` 优先于注册表字段；未传 `--kb` 时继续使用当前目录，
+因此旧项目不需要迁移。
 
 ## 4. `init`：初始化知识库
 
@@ -126,14 +154,14 @@ llm-wiki-cli index [--reset] [--json] [--source-revision <sha>]
 
 扫描配置中 `kb.include` 指定的目录，将支持的文件切片后写入索引 DB（默认 `<root>/.llm-wiki/index.db`，可由 `--db` 或 `--output-db` 覆盖）。
 
-| 选项                      | 说明                                                         |
-| ------------------------- | ------------------------------------------------------------ |
-| `--reset`                 | 清空已有索引并重新建立全量索引                               |
-| `--json`                  | 输出机器可读的结果对象，便于编排层判断成败与统计             |
+| 选项                      | 说明                                                                |
+| ------------------------- | ------------------------------------------------------------------- |
+| `--reset`                 | 清空已有索引并重新建立全量索引                                      |
+| `--json`                  | 输出机器可读的结果对象，便于编排层判断成败与统计                    |
 | `--source-revision <sha>` | 记录本次索引对应的来源版本（如合并后的 commit sha），写入索引元数据 |
-| `--source-branch <name>`  | 记录来源分支标签，写入索引元数据                             |
-| `--output-db <path>`      | 在该文件中构建索引，不触碰当前活跃索引；便于编排层校验后原子切换 |
-| `--seed-db <path>`        | 构建前先复制该旧索引再增量更新，加速大型知识库的重建         |
+| `--source-branch <name>`  | 记录来源分支标签，写入索引元数据                                    |
+| `--output-db <path>`      | 在该文件中构建索引，不触碰当前活跃索引；便于编排层校验后原子切换    |
+| `--seed-db <path>`        | 构建前先复制该旧索引再增量更新，加速大型知识库的重建                |
 
 不带 `--reset` 时执行增量索引：
 
@@ -172,7 +200,15 @@ llm-wiki-cli index \
 {
   "ok": true,
   "db": "/path/to/index.db",
-  "stats": { "scanned": 12, "added": 2, "updated": 0, "skipped": 10, "deleted": 0, "chunks": 18, "vectorEnabled": false },
+  "stats": {
+    "scanned": 12,
+    "added": 2,
+    "updated": 0,
+    "skipped": 10,
+    "deleted": 0,
+    "chunks": 18,
+    "vectorEnabled": false
+  },
   "metadata": {
     "schemaVersion": 3,
     "sourceRevision": "abc123",
@@ -195,12 +231,12 @@ llm-wiki-cli search <query> [-l, --limit <n>] [--json] [--graph] [--read-only]
 
 参数与选项：
 
-| 参数或选项        | 默认值 | 说明                                    |
-| ----------------- | ------ | --------------------------------------- |
-| `<query>`         | 必填   | 查询文本；包含空格时应使用引号包裹      |
-| `-l, --limit <n>` | `8`    | 最大结果数，必须为 `1` 到 `50` 的整数  |
-| `--json`          | 关闭   | 输出便于脚本处理的 JSON，不添加终端样式 |
-| `--graph`         | 关闭   | 通过已审核的一跳文档关系扩展结果        |
+| 参数或选项        | 默认值 | 说明                                                         |
+| ----------------- | ------ | ------------------------------------------------------------ |
+| `<query>`         | 必填   | 查询文本；包含空格时应使用引号包裹                           |
+| `-l, --limit <n>` | `8`    | 最大结果数，必须为 `1` 到 `50` 的整数                        |
+| `--json`          | 关闭   | 输出便于脚本处理的 JSON，不添加终端样式                      |
+| `--graph`         | 关闭   | 通过已审核的一跳文档关系扩展结果                             |
 | `--read-only`     | 关闭   | 保证不创建或迁移 DB；DB 不存在时返回空结果（exit 0）而非报错 |
 
 `--read-only` 适合编排层在首次索引前探测索引：不会因 DB 缺失而失败，语义上也明确表明本次检索不会产生任何写入。
@@ -263,11 +299,11 @@ llm-wiki-cli status [--json] [--target-revision <sha>] [--no-config-check]
 
 报告当前索引 DB 的健康度与 provenance，并判断是否需要重建。专为编排层设计：比较索引记录的 `sourceRevision` 与期望的目标 revision，以及索引记录的 `configHash` 与当前配置的 hash。
 
-| 选项                      | 说明                                                         |
-| ------------------------- | ------------------------------------------------------------ |
-| `--json`                  | 输出机器可读的状态对象                                       |
+| 选项                      | 说明                                                           |
+| ------------------------- | -------------------------------------------------------------- |
+| `--json`                  | 输出机器可读的状态对象                                         |
 | `--target-revision <sha>` | 期望的来源 revision；与索引记录比较，不一致则标记 `mismatches` |
-| `--no-config-check`       | 跳过当前配置 hash 与索引记录的比较                           |
+| `--no-config-check`       | 跳过当前配置 hash 与索引记录的比较                             |
 
 DB 不存在是合法状态（非错误）：输出 `exists: false` 并以 exit 0 退出，调用方据此触发首次构建。
 
@@ -315,13 +351,14 @@ llm-wiki-cli validate --db /path/to/indexes/abc123.tmp.db --json
 ## 9. `serve`：启动本地检索网页
 
 ```text
-llm-wiki-cli serve [-p, --port <port>] [--prod]
+llm-wiki-cli serve [-p, --port <port>] [--prod] [--all]
 ```
 
-| 选项                | 默认值              | 说明                                            |
-| ------------------- | ------------------- | ----------------------------------------------- |
-| `-p, --port <port>` | 配置文件中的 `port` | 仅为本次启动覆盖服务端口                        |
-| `--prod`            | 关闭                | 使用已构建的 Next.js 生产产物，而不是开发服务器 |
+| 选项                | 默认值              | 说明                                               |
+| ------------------- | ------------------- | -------------------------------------------------- |
+| `-p, --port <port>` | 配置文件中的 `port` | 仅为本次启动覆盖服务端口                           |
+| `--prod`            | 关闭                | 使用已构建的 Next.js 生产产物，而不是开发服务器    |
+| `--all`             | 关闭                | 加载注册表中的全部知识库，并在同一服务中按 ID 隔离 |
 
 示例：
 
@@ -335,9 +372,27 @@ llm-wiki-cli serve --port 8080
 # 使用生产构建；需事先构建 Web 应用
 pnpm --filter @llm-wiki/web build
 llm-wiki-cli serve --prod
+
+# 从其他目录启动一个已注册知识库
+llm-wiki-cli --kb backend serve
+
+# 启动全部已注册知识库
+llm-wiki-cli serve --all
 ```
 
-服务启动后可在网页中搜索、查看结果来源、打开文件内容，以及检查索引文件数、切片数和向量状态。按 `Ctrl+C` 停止服务。
+多库服务的页面路径为 `/kbs/<kbId>`，API 路径为 `/api/kbs/<kbId>/...`。文件、搜索、
+统计、图谱和关系审核都显式携带 `kbId`，不同知识库继续使用各自独立的 SQLite 文件。
+顶部选择器用于切换知识库，左侧文件树只展示当前选中知识库的文档。
+
+`serve --all` 模式还会显示 **Add knowledge base**：
+
+- 输入本机绝对目录路径，可直接注册已经初始化的知识库；
+- 如果没有 `.llm-wiki/config.json`，勾选初始化后会创建默认配置、`wiki/welcome.md`
+  和独立的空索引数据库，再加入全局注册表；
+- 已存在但格式损坏的配置不会被覆盖；
+- 单库 `serve` 不开放注册表写入，因此不会显示添加按钮。
+
+按 `Ctrl+C` 停止服务。
 
 ## 10. 配置文件
 
@@ -407,13 +462,13 @@ printf '%s\n' "$result" | jq -e '.hits | length > 0'
 
 `llm-wiki-cli` 使用稳定的退出码，便于编排层判断失败类别：
 
-| 退出码 | 含义                                             |
-| ------ | ------------------------------------------------ |
-| `0`    | 成功（包括 `status` 报告 DB 不存在、`search --read-only` 空库） |
-| `1`    | 未预期的内部错误（兜底）                         |
-| `2`    | 配置问题：文件缺失、JSON 非法、校验失败         |
+| 退出码 | 含义                                                                |
+| ------ | ------------------------------------------------------------------- |
+| `0`    | 成功（包括 `status` 报告 DB 不存在、`search --read-only` 空库）     |
+| `1`    | 未预期的内部错误（兜底）                                            |
+| `2`    | 配置问题：文件缺失、JSON 非法、校验失败                             |
 | `3`    | 数据库/索引问题：无法打开、损坏、busy、schema 不匹配、validate 失败 |
-| `4`    | 参数问题：非法 flag 值、空查询、limit 越界       |
+| `4`    | 参数问题：非法 flag 值、空查询、limit 越界                          |
 
 当命令以 `--json` 调用且失败时，stderr 会输出结构化错误对象，stdout 不产生成功体：
 

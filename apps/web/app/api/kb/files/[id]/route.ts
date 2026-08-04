@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getFileDetail } from "@llm-wiki/kb";
+import { loadKbContext } from "../../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,7 +21,8 @@ export async function GET(
   }
 
   try {
-    const detail = getFileDetail(fileId);
+    const context = loadKbContext();
+    const detail = getFileDetail(fileId, { projectRoot: context.root, dbPath: context.dbPath });
     if (!detail) {
       return NextResponse.json({ error: "File not found." }, { status: 404 });
     }

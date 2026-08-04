@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Input, Button } from "@heroui/react";
+import type { KnowledgeBaseSummary } from "./AppShell";
+import KnowledgeBaseSwitcher from "./KnowledgeBaseSwitcher";
 
 /**
  * Persistent top navigation bar.
@@ -12,7 +14,17 @@ import { Input, Button } from "@heroui/react";
  * content area. Kept intentionally lightweight — the heavy lifting (fetching
  * results) lives in `SearchResults`.
  */
-export default function TopNav({ title }: { title: string }): React.ReactElement {
+export default function TopNav({
+  title,
+  kbId,
+  knowledgeBases,
+  canAdd,
+}: {
+  title: string;
+  kbId: string;
+  knowledgeBases: KnowledgeBaseSummary[];
+  canAdd: boolean;
+}): React.ReactElement {
   const router = useRouter();
   const [query, setQuery] = useState("");
 
@@ -20,16 +32,16 @@ export default function TopNav({ title }: { title: string }): React.ReactElement
     e.preventDefault();
     const q = query.trim();
     if (q.length === 0) {
-      router.push("/");
+      router.push(`/kbs/${encodeURIComponent(kbId)}`);
     } else {
-      router.push(`/?q=${encodeURIComponent(q)}`);
+      router.push(`/kbs/${encodeURIComponent(kbId)}?q=${encodeURIComponent(q)}`);
     }
   };
 
   return (
     <header className="wiki-header sticky top-0 z-30 flex h-16 shrink-0 items-center gap-4 px-4 md:px-6">
       <a
-        href="/"
+        href={`/kbs/${encodeURIComponent(kbId)}`}
         className="wiki-brand flex shrink-0 items-center gap-3 text-foreground"
         aria-label={`${title} — home`}
       >
@@ -49,6 +61,8 @@ export default function TopNav({ title }: { title: string }): React.ReactElement
         </span>
       </a>
 
+      <KnowledgeBaseSwitcher kbId={kbId} knowledgeBases={knowledgeBases} canAdd={canAdd} />
+
       <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-2xl items-center gap-2">
         <Input
           value={query}
@@ -62,7 +76,7 @@ export default function TopNav({ title }: { title: string }): React.ReactElement
         </Button>
       </form>
       <a
-        href="/relations/review"
+        href={`/kbs/${encodeURIComponent(kbId)}/relations/review`}
         className="hidden shrink-0 text-xs font-semibold text-slate-500 hover:text-indigo-700 sm:block"
       >
         Review relations

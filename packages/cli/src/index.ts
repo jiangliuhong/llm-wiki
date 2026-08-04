@@ -7,6 +7,7 @@ import { makeSearchCommand } from "./commands/search.js";
 import { makeRelationsCommand } from "./commands/relations.js";
 import { makeStatusCommand } from "./commands/status.js";
 import { makeValidateCommand } from "./commands/validate.js";
+import { makeKbCommand } from "./commands/kb.js";
 import { logger } from "./utils/logger.js";
 import { ExitCode } from "./utils/errors.js";
 import { readFileSync } from "node:fs";
@@ -49,23 +50,21 @@ program
   // Global options, declared on the program and readable from every subcommand
   // via `cmd.optsWithGlobals()`. Each is also bound to an environment variable
   // so an orchestrator can set it once for a whole pipeline run.
+  .addOption(new Option("--kb <id>", "Registered knowledge-base id.").env("LLM_WIKI_KB"))
   .addOption(
-    new Option(
-      "--root <path>",
-      "Knowledge-base root directory (default: current directory).",
-    ).env("LLM_WIKI_ROOT"),
+    new Option("--root <path>", "Knowledge-base root directory (default: current directory).").env(
+      "LLM_WIKI_ROOT",
+    ),
   )
   .addOption(
-    new Option(
-      "--db <path>",
-      "SQLite index file (default: <root>/.llm-wiki/index.db).",
-    ).env("LLM_WIKI_DB"),
+    new Option("--db <path>", "SQLite index file (default: <root>/.llm-wiki/index.db).").env(
+      "LLM_WIKI_DB",
+    ),
   )
   .addOption(
-    new Option(
-      "--config <path>",
-      "Config file (default: <root>/.llm-wiki/config.json).",
-    ).env("LLM_WIKI_CONFIG"),
+    new Option("--config <path>", "Config file (default: <root>/.llm-wiki/config.json).").env(
+      "LLM_WIKI_CONFIG",
+    ),
   );
 
 // Register the exit override BEFORE adding subcommands: commander snapshots
@@ -81,6 +80,7 @@ program.addCommand(makeSearchCommand());
 program.addCommand(makeRelationsCommand());
 program.addCommand(makeStatusCommand());
 program.addCommand(makeValidateCommand());
+program.addCommand(makeKbCommand());
 program.addCommand(makeServeCommand());
 
 // Propagate the exit override to every subcommand (including nested ones like
@@ -107,7 +107,11 @@ for (const child of program.commands) {
 program.parseAsync(process.argv).catch((err: unknown) => {
   const code = (err as { code?: string })?.code;
   // --help / --version are surfaced by commander as throws; treat as success.
-  if (code === "commander.helpDisplayed" || code === "commander.version" || code === "commander.help") {
+  if (
+    code === "commander.helpDisplayed" ||
+    code === "commander.version" ||
+    code === "commander.help"
+  ) {
     return;
   }
   logger.error((err as Error)?.message ?? String(err));

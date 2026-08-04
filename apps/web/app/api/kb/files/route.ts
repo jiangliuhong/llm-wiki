@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { listFiles } from "@llm-wiki/kb";
+import { loadKbContext } from "../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,7 +37,14 @@ export async function GET(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const result = listFiles({ page, pageSize, q });
+    const context = loadKbContext();
+    const result = listFiles({
+      projectRoot: context.root,
+      dbPath: context.dbPath,
+      page,
+      pageSize,
+      q,
+    });
     return NextResponse.json(result);
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });

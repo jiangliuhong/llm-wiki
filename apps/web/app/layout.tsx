@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import TopNav from "@/components/TopNav";
-import FileTree from "@/components/FileTree";
+import AppShell from "@/components/AppShell";
+import { getDefaultKbId, listKbContexts, loadServeManifest } from "@/app/api/_lib/kb-config";
 import "./globals.css";
 
 /**
@@ -39,18 +39,15 @@ export const viewport: Viewport = {
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+  const knowledgeBases = listKbContexts().map(({ id, title }) => ({ id, title }));
+  const defaultKb = getDefaultKbId();
+  const canAdd = Boolean(loadServeManifest()?.registryPath);
   return (
     <html lang="en" className="light" suppressHydrationWarning>
       <body className="h-screen overflow-hidden text-foreground antialiased">
-        <div className="wiki-shell flex h-screen overflow-hidden flex-col">
-          <TopNav title={wikiTitle} />
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            <aside className="wiki-sidebar hidden w-72 shrink-0 md:block">
-              <FileTree />
-            </aside>
-            <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-          </div>
-        </div>
+        <AppShell knowledgeBases={knowledgeBases} defaultKb={defaultKb} canAdd={canAdd}>
+          {children}
+        </AppShell>
       </body>
     </html>
   );

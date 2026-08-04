@@ -48,11 +48,11 @@ function buildTree(files: KbFileSummary[]): TreeNode {
 /** Active file id parsed from a `/files/[id]` pathname, or null. */
 function activeIdFromPath(pathname: string | null): number | null {
   if (!pathname) return null;
-  const m = pathname.match(/^\/files\/(\d+)/);
+  const m = pathname.match(/\/(?:kbs\/[^/]+\/)?files\/(\d+)/);
   return m?.[1] ? Number.parseInt(m[1], 10) : null;
 }
 
-export default function FileTree(): React.ReactElement {
+export default function FileTree({ kbId }: { kbId: string }): React.ReactElement {
   const [files, setFiles] = useState<KbFileSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -63,7 +63,7 @@ export default function FileTree(): React.ReactElement {
     let cancelled = false;
     // pageSize=500 keeps the tree full for typical local wikis; pagination
     // is handled server-side and the UI gracefully truncates if exceeded.
-    fetch("/api/kb/files?pageSize=500")
+    fetch(`/api/kbs/${encodeURIComponent(kbId)}/files?pageSize=500`)
       .then((r) => r.json())
       .then((data: { files?: KbFileSummary[]; error?: string }) => {
         if (cancelled) return;
@@ -74,7 +74,7 @@ export default function FileTree(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [kbId]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -134,6 +134,7 @@ export default function FileTree(): React.ReactElement {
             collapsed={collapsed}
             onToggle={toggle}
             activeId={activeId}
+            kbId={kbId}
           />
         )}
       </div>
@@ -148,6 +149,7 @@ function TreeBranch({
   collapsed,
   onToggle,
   activeId,
+  kbId,
 }: {
   node: TreeNode;
   depth: number;
@@ -155,6 +157,7 @@ function TreeBranch({
   collapsed: Set<string>;
   onToggle: (key: string) => void;
   activeId: number | null;
+  kbId: string;
 }): React.ReactElement {
   const children = node.children ? Array.from(node.children.values()) : [];
   // Folders first (alpha), then files (alpha).
@@ -199,6 +202,7 @@ function TreeBranch({
                   collapsed={collapsed}
                   onToggle={onToggle}
                   activeId={activeId}
+                  kbId={kbId}
                 />
               ) : null}
             </li>
@@ -208,7 +212,7 @@ function TreeBranch({
         return (
           <li key={key}>
             <Link
-              href={`/files/${child.file!.id}`}
+              href={`/kbs/${encodeURIComponent(kbId)}/files/${child.file!.id}`}
               className={`tree-row flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm ${
                 isActive ? "tree-row-active font-semibold text-indigo-700" : "text-slate-600"
               }`}

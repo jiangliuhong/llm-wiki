@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getDocumentRelations } from "@llm-wiki/kb";
+import { loadKbContext } from "../../../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +17,11 @@ export async function GET(
   if (!["incoming", "outgoing", "both"].includes(direction))
     return NextResponse.json({ error: "Invalid relation direction." }, { status: 400 });
   try {
+    const context = loadKbContext();
     return NextResponse.json(
       getDocumentRelations(fileId, {
+        projectRoot: context.root,
+        dbPath: context.dbPath,
         direction: direction as "incoming" | "outgoing" | "both",
         type: request.nextUrl.searchParams.get("type") ?? undefined,
       }),

@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import type { WikiConfig } from "../types/config.js";
 import { getWebAppDir } from "../utils/paths.js";
 import { logger } from "../utils/logger.js";
+import type { GlobalContext } from "../utils/global-options.js";
 
 /**
  * Starts the bundled Next.js app **in-process**, using the Next.js Node API
@@ -56,6 +57,12 @@ type NextRequestHandler = (
 export interface ServeOptions {
   /** Wiki config providing title + port. */
   config: WikiConfig;
+  /** Fully resolved knowledge-base paths exposed to server-side Web code. */
+  context: GlobalContext;
+  /** One or more independently stored knowledge bases exposed by this server. */
+  knowledgeBases?: Array<{ config: WikiConfig; context: GlobalContext }>;
+  /** Registry backing an editable multi-library service. Omitted for single-library serving. */
+  registryPath?: string;
   /** Run in dev mode (HMR, on-the-fly compile). Defaults to true. */
   dev?: boolean;
   /** Optional override host. Defaults to listening on all interfaces. */
@@ -92,7 +99,14 @@ async function loadNext(): Promise<NextFactory> {
  * server already does that) and for wiring up graceful shutdown if desired.
  */
 export async function startNextServer(options: ServeOptions): Promise<ServeResult> {
-  const { config, dev = true, hostname = "0.0.0.0" } = options;
+  const {
+    config,
+    context,
+    knowledgeBases = [{ config, context }],
+    registryPath,
+    dev = true,
+    hostname = "0.0.0.0",
+  } = options;
 
   const dir = getWebAppDir();
 
@@ -101,6 +115,12 @@ export async function startNextServer(options: ServeOptions): Promise<ServeResul
   process.env.NEXT_PUBLIC_WIKI_TITLE = config.title;
   // Also expose as a plain env var for any server components.
   process.env.WIKI_TITLE = config.title;
+  process.env.LLM_WIKI_ROOT = context.root;
+  process.env.LLM_WIKI_DB = context.dbPath;
+  process.env.LLM_WIKI_CONFIG = context.configPath;
+  process.env.LLM_WIKI_KB_ID = context.kbId ?? "default";
+  const manifestPath = writeServeManifest(knowledgeBases, context.kbId ?? "default", registryPath);
+  process.env.LLM_WIKI_SERVE_MANIFEST = manifestPath;
 
   // Next.js needs a writable `.next` cache dir. In the monorepo that lives
   // inside the web package; when packaged we still want it writable, so we
@@ -117,6 +137,13 @@ export async function startNextServer(options: ServeOptions): Promise<ServeResul
     // `handler` expects IncomingMessage / ServerResponse; the http server
     // provides exactly those types.
     handler(req, res);
+  });
+  server.once("close", () => {
+    try {
+      nodeFs.unlinkSync(manifestPath);
+    } catch {
+      // Best-effort cleanup; the OS temp directory is safe if the process exits abruptly.
+    }
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -148,6 +175,32 @@ export async function startNextServer(options: ServeOptions): Promise<ServeResul
   logger.info(`Press Ctrl+C to stop.`);
 
   return { server, url, dir };
+}
+
+function writeServeManifest(
+  knowledgeBases: Array<{ config: WikiConfig; context: GlobalContext }>,
+  defaultKb: string,
+  registryPath?: string,
+): string {
+  const manifestPath = nodePath.join(tmpdir(), `llm-wiki-serve-${process.pid}.json`);
+  const manifest = {
+    version: 1,
+    defaultKb,
+    registryPath,
+    knowledgeBases: knowledgeBases.map(({ config, context }) => ({
+      id: context.kbId ?? "default",
+      title: config.title,
+      root: context.root,
+      configPath: context.configPath,
+      dbPath: context.dbPath,
+      embedding: {
+        enabled: config.kb?.embedding.enabled ?? false,
+        dimensions: config.kb?.embedding.dimensions ?? 1536,
+      },
+    })),
+  };
+  nodeFs.writeFileSync(manifestPath, JSON.stringify(manifest), { mode: 0o600 });
+  return manifestPath;
 }
 
 /**

@@ -5,13 +5,14 @@ export function guardSameOriginJson(request: Request): Response | null {
   const origin = request.headers.get("origin");
   const requestUrl = new URL(request.url);
   const requestHost = request.headers.get("host") ?? requestUrl.host;
-  let sameOrigin = false;
-  try {
-    const originUrl = new URL(origin ?? "");
-    sameOrigin = originUrl.protocol === requestUrl.protocol && originUrl.host === requestHost;
-  } catch {
-    sameOrigin = false;
-  }
+  const sameOrigin = (() => {
+    try {
+      const originUrl = new URL(origin ?? "");
+      return originUrl.protocol === requestUrl.protocol && originUrl.host === requestHost;
+    } catch {
+      return false;
+    }
+  })();
   if (!sameOrigin) {
     return NextResponse.json(
       { error: "Cross-origin relation updates are not allowed." },

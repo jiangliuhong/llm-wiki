@@ -71,6 +71,15 @@ llm-wiki-cli relations list       # 审核 Agent 提出的关系候选
 llm-wiki-cli serve       # 启动网页，浏览器打开检索页
 ```
 
+也可以把多个已有知识库注册到统一入口，在任意目录按 ID 操作：
+
+```bash
+llm-wiki-cli kb add backend /path/to/backend
+llm-wiki-cli kb add product /path/to/product
+llm-wiki-cli --kb backend search "部署流程"
+llm-wiki-cli serve --all
+```
+
 ## 命令一览
 
 ```
@@ -79,6 +88,7 @@ llm-wiki-cli init [options]
 llm-wiki-cli index [options]
 llm-wiki-cli search <query> [options]
 llm-wiki-cli relations <command>
+llm-wiki-cli kb <command>
 llm-wiki-cli serve [options]
 ```
 
@@ -171,12 +181,28 @@ llm-wiki-cli relations diagnostics
 读取 `.llm-wiki/config.json`，在**进程内**启动 Next.js（不派生子进程、不调 shell），首页即为知识库检索页。
 
 ```bash
-llm-wiki-cli serve [-p, --port <端口>] [--prod]
+llm-wiki-cli serve [-p, --port <端口>] [--prod] [--all]
 ```
 
 - 默认端口取自配置（或 `3000`）。
 - `-p, --port <端口>`：覆盖配置中的端口。
 - `--prod`：使用构建产物（`.next`）而非 dev server。
+- `--all`：启动一个服务并加载全局注册表中的全部知识库；页面和 API 按知识库 ID 隔离。
+
+单库可从任意目录启动，多库服务会显示知识库切换器：
+
+```bash
+llm-wiki-cli --root /path/to/wiki serve
+llm-wiki-cli --kb backend serve
+llm-wiki-cli serve --all
+```
+
+多库页面使用 `/kbs/<id>`，API 使用 `/api/kbs/<id>/...`。每个知识库仍保留独立的
+`.llm-wiki/index.db`，不会合并数据。
+
+在 `serve --all` 模式下，顶部知识库切换器旁会显示 **Add knowledge base**。输入本机绝对
+目录路径即可注册；如果目录尚未初始化，可以勾选初始化选项，WebUI 会创建默认
+`.llm-wiki/config.json`、`wiki/welcome.md` 和空的独立索引库。已有但无法解析的配置不会被覆盖。
 
 启动后：
 

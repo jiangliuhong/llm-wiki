@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getDocumentNeighborhood } from "@llm-wiki/kb";
+import { loadKbContext } from "../../_lib/kb-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,11 @@ export async function GET(request: NextRequest): Promise<Response> {
   if (!Number.isInteger(depth) || depth < 1 || depth > 3)
     return NextResponse.json({ error: "depth must be between 1 and 3." }, { status: 400 });
   try {
-    const graph = getDocumentNeighborhood(fileId, depth);
+    const context = loadKbContext();
+    const graph = getDocumentNeighborhood(fileId, depth, {
+      projectRoot: context.root,
+      dbPath: context.dbPath,
+    });
     return graph
       ? NextResponse.json(graph)
       : NextResponse.json({ error: "Document not found." }, { status: 404 });
