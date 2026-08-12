@@ -1,20 +1,20 @@
 ---
 name: kb-search-docs
-description: Search this project's local knowledge base with `llm-wiki-cli search` before answering documentation, schema, table, metric, business-rule, P&L, data warehouse, or project knowledge questions. Use when Codex needs to retrieve relevant files under the configured content directory (`{{KB_INCLUDE}}`), cite local document paths and line ranges, compare documentation topics, or inspect project knowledge before editing or explaining docs.
+description: Search this project's local knowledge base with `llm-wiki search` before answering documentation, schema, table, metric, business-rule, P&L, data warehouse, or project knowledge questions. Use when Codex needs to retrieve relevant files under the configured content directory (`{{KB_INCLUDE}}`), cite local document paths and line ranges, compare documentation topics, or inspect project knowledge before editing or explaining docs.
 ---
 
 # KB Search Docs
 
 Search the local knowledge base before answering questions that depend on project documentation. Treat search previews as pointers and inspect the source files before drawing conclusions.
 
-The content directory named in the description comes from the project's `kb.include` configuration (filled in by `llm-wiki-cli init`). If it still shows the raw placeholder form, read `.llm-wiki/config.json` to resolve the real content directory.
+The content directory named in the description comes from the project's `kb.include` configuration (filled in by `llm-wiki init`). If it still shows the raw placeholder form, read `.llm-wiki/config.json` to resolve the real content directory.
 
 ## Search workflow
 
 1. Run the search from the knowledge-base root, using paths injected by the orchestrator (do not guess the root, DB, or config path):
 
    ```bash
-   llm-wiki-cli search "search terms"
+   llm-wiki search "search terms"
    ```
 
 2. Start with the user's exact business terms, table names, field names, metric names, country names, or error phrases.

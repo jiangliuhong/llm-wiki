@@ -12,7 +12,7 @@ import { ExitCode } from "../utils/errors.js";
 import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-options.js";
 
 /**
- * `llm-wiki-cli validate --db <path> [--json]`
+ * `llm-wiki validate --db <path> [--json]`
  *
  * Checks a candidate index DB for integrity before an orchestrator swaps it
  * in as the active index. Runs `PRAGMA integrity_check`, verifies the
@@ -58,7 +58,7 @@ function runValidate(options: ValidateOptions, cmd: Command): void {
   if ((!raw.db || raw.db.length === 0) && (!raw.kb || raw.kb.length === 0)) {
     process.stderr.write(
       JSON.stringify({
-        error: { code: "ARGS_DB_REQUIRED", message: "validate requires --db <path> or --kb <id>" },
+        error: { code: "ARGS_DB_REQUIRED", message: "validate requires --db <path> or --workspace <id>" },
       }) + "\n",
     );
     process.exitCode = 4; // EXIT_ARGS

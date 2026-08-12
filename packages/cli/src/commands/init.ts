@@ -2,12 +2,14 @@ import { Command } from "commander";
 import nodeFs from "node:fs";
 import nodePath from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import { getDefaultConfig, saveConfig, hasConfig, loadConfig } from "../utils/config.js";
-import { getConfigPath } from "../utils/paths.js";
+import { getConfigPath, getWorkspaceManifestPath } from "../utils/paths.js";
+import type { WorkspaceManifest } from "../types/config.js";
 import { logger } from "../utils/logger.js";
 
 /**
- * `llm-wiki-cli init`
+ * `llm-wiki init`
  *
  * Scaffolds a fresh Wiki project in the current working directory:
  *   - creates `.llm-wiki/`
@@ -22,7 +24,7 @@ export function makeInitCommand(): Command {
   const command = new Command("init");
 
   command
-    .description("Initialize a new LLLM Wiki project in the current directory")
+    .description("Initialize a new LLM Wiki workspace in the current directory")
     .option(
       "--title <title>",
       "Wiki title written to .llm-wiki/config.json",
@@ -56,6 +58,7 @@ function runInit(options: InitOptions, cmd: Command): void {
     // Config exists: still install any missing skills, rendered against the
     // existing config's content directory so they reflect the real layout.
     const existing = loadExistingConfigSafe(root);
+    createWorkspaceManifest(root, existing?.title ?? options.title);
     const createdSkills = createSkills(root, existing?.kb?.include ?? []);
     logger.warn(
       `A config already exists at ${getConfigPath(root)}.\n` + `The existing config was not changed.`,
@@ -66,6 +69,8 @@ function runInit(options: InitOptions, cmd: Command): void {
 
   const defaultConfig = getDefaultConfig();
   const config = { title: options.title, port: options.port, kb: defaultConfig.kb };
+
+  createWorkspaceManifest(root, options.title);
 
   // Install skills rendered against the config we are about to write, so the
   // placeholder substitution matches the real content directory.
@@ -81,15 +86,15 @@ function runInit(options: InitOptions, cmd: Command): void {
   logger.info(`Created ${getConfigPath(root)}`);
   logCreatedSkills(createdSkills, root);
   logger.info(`Title: "${config.title}"  Port: ${config.port}`);
-  logger.info(`Next: add files to wiki/ and run "llm-wiki-cli index".`);
+  logger.info(`Next: add files to wiki/ and run "llm-wiki index".`);
 }
 
 /** Loads the existing config without throwing on parse errors (best-effort). */
 function loadExistingConfigSafe(
   cwd: string,
-): { kb?: { include?: string[] } } | null {
+): { title?: string; kb?: { include?: string[] } } | null {
   try {
-    return loadConfig(cwd) as { kb?: { include?: string[] } };
+    return loadConfig(cwd) as { title?: string; kb?: { include?: string[] } };
   } catch {
     return null;
   }
@@ -165,7 +170,7 @@ function createContentDir(cwd: string = process.cwd()): void {
     [
       `# Welcome to your wiki`,
       ``,
-      `This directory is scanned by \`llm-wiki-cli index\`. Replace this file`,
+      `This directory is scanned by \`llm-wiki index\`. Replace this file`,
       `with your own Markdown, code, or text files and re-index to make them`,
       `searchable from the web UI.`,
       ``,
@@ -173,6 +178,21 @@ function createContentDir(cwd: string = process.cwd()): void {
     "utf8",
   );
   logger.info(`Created ${nodePath.relative(cwd, placeholder) || placeholder}`);
+}
+
+function createWorkspaceManifest(root: string, title: string): void {
+  const manifestPath = getWorkspaceManifestPath(root);
+  if (nodeFs.existsSync(manifestPath)) return;
+  const manifest: WorkspaceManifest = {
+    version: 1,
+    id: randomUUID(),
+    title,
+    root: nodePath.resolve(root),
+    createdAt: new Date().toISOString(),
+  };
+  nodeFs.mkdirSync(nodePath.dirname(manifestPath), { recursive: true });
+  nodeFs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+  logger.info(`Created ${nodePath.relative(root, manifestPath) || manifestPath}`);
 }
 
 function parsePort(value: string): number {

@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 /**
- * Next.js config for the LLLM Wiki web app.
+ * Next.js config for the LLM Wiki web app.
  *
  * - `transpilePackages` is required for HeroUI v3 (per the official Next.js +
  *   HeroUI guide) so its ESM packages are transpiled to a form Next can bundle.
@@ -15,7 +15,7 @@ import type { NextConfig } from "next";
  */
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // `llm-wiki-cli serve` intentionally uses Next's development runtime so a
+  // `llm-wiki serve` intentionally uses Next's development runtime so a
   // globally linked CLI can serve the bundled source without requiring a
   // separate web build. Hide Next's development toolbar from the end-user UI.
   devIndicators: false,

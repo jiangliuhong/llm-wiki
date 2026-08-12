@@ -48,7 +48,7 @@ export interface IndexRunOptions {
   reset?: boolean;
   /**
    * Free-form revision identifier (e.g. the merged commit sha) to record as
-   * the source this index was built from. `llm-wiki-cli` never reads git —
+   * the source this index was built from. `llm-wiki` never reads git —
    * callers (e.g. pi-agents) are responsible for passing the right value.
    * Stored verbatim in index metadata.
    */

@@ -1,6 +1,6 @@
 /**
- * Shape of the `.llm-wiki/config.json` file written by `llm-wiki-cli init`
- * and read by `llm-wiki-cli serve` / `index` / `search`.
+ * Shape of the `.llm-wiki/config.json` file written by `llm-wiki init`
+ * and read by `llm-wiki serve` / `index` / `search`.
  *
  * `kb` is optional: older configs written before the knowledge-base feature
  * exist will simply omit it, and `loadConfig` fills in the defaults.
@@ -48,6 +48,17 @@ export const DEFAULT_CONFIG: Readonly<WikiConfig> = {
 
 /** Directory name (relative to the user's working directory) for wiki data. */
 export const WIKI_DIR_NAME = ".llm-wiki";
+
+/** Stable workspace identity stored inside each workspace root. */
+export const WORKSPACE_FILE_NAME = "workspace.json";
+
+export interface WorkspaceManifest {
+  version: 1;
+  id: string;
+  title: string;
+  root: string;
+  createdAt: string;
+}
 
 /** Config file name inside {@link WIKI_DIR_NAME}. */
 export const CONFIG_FILE_NAME = "config.json";

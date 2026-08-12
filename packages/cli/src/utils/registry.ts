@@ -81,7 +81,7 @@ export function resolveRegistryEntry(
   const entry = registry.knowledgeBases[id];
   if (!entry) {
     throw new RegistryError(
-      `Knowledge base "${id}" is not registered. Run "llm-wiki-cli kb list" to see available entries.`,
+      `Workspace "${id}" is not registered. Run "llm-wiki workspace list" to see available entries.`,
     );
   }
   return entry;

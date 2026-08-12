@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# 全局安装 llm-wiki-cli 命令。
+# 全局安装 llm-wiki 命令。
 #
 # 用法: 在仓库根目录执行  ./install.sh   或   bash install.sh
 #
 # 本脚本会:
 #   1. 构建 @llm-wiki/cli 及其依赖 @llm-wiki/kb(跳过无关的 apps/web)
-#   2. 将 packages/cli 全局安装,使其暴露 llm-wiki-cli 命令
+#   2. 将 packages/cli 全局安装,使其暴露 llm-wiki 命令
 #   3. 验证命令可用
 #
 # 说明: 全局安装是软链而非拷贝,因此每次修改源码后重新运行本脚本即可更新全局命令。
@@ -66,11 +66,11 @@ info "全局安装 @llm-wiki/cli(来自 $CLI_DIR)…"
 ok "全局安装完成"
 
 # ---------- 3. 验证 ----------
-if command -v llm-wiki-cli >/dev/null 2>&1; then
-  ok "命令可用: $(command -v llm-wiki-cli)"
+if command -v llm-wiki >/dev/null 2>&1; then
+  ok "命令可用: $(command -v llm-wiki)"
   printf "\n${BOLD}版本:${RESET}\n"
-  llm-wiki-cli --version
+  llm-wiki --version
 else
-  fail "llm-wiki-cli 未在 PATH 中。可能需要重新加载 shell: source ~/.bashrc"
+  fail "llm-wiki 未在 PATH 中。可能需要重新加载 shell: source ~/.bashrc"
   exit 1
 fi

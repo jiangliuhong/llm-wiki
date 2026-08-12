@@ -1,0 +1,11 @@
+[package]
+name = "llm-wiki-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+llm-wiki-core = { path = "../llm-wiki-core" }
+llm-wiki-protocol = { path = "../llm-wiki-protocol" }
+serde.workspace = true
+serde_json.workspace = true

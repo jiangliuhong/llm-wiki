@@ -1,4 +1,4 @@
-# llm-wiki-cli
+# llm-wiki
 
 一个本地知识库 Wiki 平台的命令行工具：扫描文档 → 切片 → SQLite FTS5 索引 → 本地检索，并通过一个命令把检索网页跑起来。实验性的 sqlite-vec 向量路径可按需启用。
 
@@ -39,14 +39,14 @@
 pnpm install
 ```
 
-## 让 `llm-wiki-cli` 命令全局可用（可选）
+## 让 `llm-wiki` 命令全局可用（可选）
 
 ```bash
 pnpm --filter @llm-wiki/cli build
 pnpm --filter @llm-wiki/cli link --global
 ```
 
-链接后即可在任意目录运行 `llm-wiki-cli`。
+链接后即可在任意目录运行 `llm-wiki`。
 
 > 未链接时也可直接调用：
 >
@@ -62,34 +62,36 @@ pnpm --filter @llm-wiki/cli link --global
 在一个**空目录**里（或你希望作为知识库根目录的项目里）：
 
 ```bash
-llm-wiki-cli init        # 初始化：写配置 + 建 wiki/ 目录 + 安装项目 skills
+llm-wiki init        # 初始化：写配置 + 建 wiki/ 目录 + 安装项目 skills
 # 把你的文档放进 wiki/（Markdown、代码、文本等均可）
-llm-wiki-cli index       # 索引：扫描 → 切片 → 嵌入 → 入库
-llm-wiki-cli search "你的查询词"   # 命令行检索
-llm-wiki-cli search "你的查询词" --graph # 同时返回一跳关联文档
-llm-wiki-cli relations list       # 审核 Agent 提出的关系候选
-llm-wiki-cli serve       # 启动网页，浏览器打开检索页
+llm-wiki index       # 索引：扫描 → 切片 → 嵌入 → 入库
+llm-wiki search "你的查询词"   # 命令行检索
+llm-wiki search "你的查询词" --graph # 同时返回一跳关联文档
+llm-wiki relations list       # 审核 Agent 提出的关系候选
+llm-wiki serve       # 启动网页，浏览器打开检索页
 ```
 
 也可以把多个已有知识库注册到统一入口，在任意目录按 ID 操作：
 
 ```bash
-llm-wiki-cli kb add backend /path/to/backend
-llm-wiki-cli kb add product /path/to/product
-llm-wiki-cli --kb backend search "部署流程"
-llm-wiki-cli serve --all
+llm-wiki workspace add backend /path/to/backend
+llm-wiki workspace add product /path/to/product
+llm-wiki --workspace backend search "部署流程"
+llm-wiki serve --all
 ```
+
+`init` 和 `workspace create` 会生成稳定的 `.llm-wiki/workspace.json`。在工作空间子目录中，`llm-wiki` 会向上发现该文件；也可以显式使用 `--workspace <id|path>`。
 
 ## 命令一览
 
 ```
-llm-wiki-cli --help
-llm-wiki-cli init [options]
-llm-wiki-cli index [options]
-llm-wiki-cli search <query> [options]
-llm-wiki-cli relations <command>
-llm-wiki-cli kb <command>
-llm-wiki-cli serve [options]
+llm-wiki --help
+llm-wiki init [options]
+llm-wiki index [options]
+llm-wiki search <query> [options]
+llm-wiki relations <command>
+llm-wiki workspace <command>
+llm-wiki serve [options]
 ```
 
 ### `init` — 初始化知识库
@@ -98,7 +100,7 @@ llm-wiki-cli serve [options]
 若配置或同名 skill 已存在，命令会保留已有内容；再次执行可补装缺失的内置 skill。
 
 ```bash
-llm-wiki-cli init [--title <标题>] [--port <端口>]
+llm-wiki init [--title <标题>] [--port <端口>]
 ```
 
 生成的配置示例：
@@ -121,7 +123,7 @@ llm-wiki-cli init [--title <标题>] [--port <端口>]
 扫描 `kb.include` 指定的目录（默认 `wiki/`），对支持的文件做切片、嵌入并写入 `.llm-wiki/index.db`。
 
 ```bash
-llm-wiki-cli index [--reset]
+llm-wiki index [--reset]
 ```
 
 - **增量索引（默认）**：按 `sha256 + mtime + size` 判断文件是否变化，未变则跳过；已删除的文件会从索引中清除。
@@ -132,7 +134,7 @@ llm-wiki-cli index [--reset]
 ### `search` — 命令行检索
 
 ```bash
-llm-wiki-cli search <query> [--limit <n>] [--json] [--graph]
+llm-wiki search <query> [--limit <n>] [--json] [--graph]
 ```
 
 - `-l, --limit <n>`：最大返回数，默认 `8`，范围 `1` 到 `50`。
@@ -167,11 +169,11 @@ relations:
 内置 `kb-infer-relations` skill 可指导调用方 Agent 生成带证据的候选 JSON。候选必须通过 Web 的 `/relations/review` 或 CLI 审核后才进入正式图谱：
 
 ```bash
-llm-wiki-cli relations propose --input proposals.json
-llm-wiki-cli relations list --status pending
-llm-wiki-cli relations approve 1
-llm-wiki-cli relations reject 2
-llm-wiki-cli relations diagnostics
+llm-wiki relations propose --input proposals.json
+llm-wiki relations list --status pending
+llm-wiki relations approve 1
+llm-wiki relations reject 2
+llm-wiki relations diagnostics
 ```
 
 完整格式、解析规则和审核流程见 [`docs/wiki-graph.md`](./docs/wiki-graph.md)。
@@ -181,7 +183,7 @@ llm-wiki-cli relations diagnostics
 读取 `.llm-wiki/config.json`，在**进程内**启动 Next.js（不派生子进程、不调 shell），首页即为知识库检索页。
 
 ```bash
-llm-wiki-cli serve [-p, --port <端口>] [--prod] [--all]
+llm-wiki serve [-p, --port <端口>] [--prod] [--all]
 ```
 
 - 默认端口取自配置（或 `3000`）。
@@ -192,9 +194,9 @@ llm-wiki-cli serve [-p, --port <端口>] [--prod] [--all]
 单库可从任意目录启动，多库服务会显示知识库切换器：
 
 ```bash
-llm-wiki-cli --root /path/to/wiki serve
-llm-wiki-cli --kb backend serve
-llm-wiki-cli serve --all
+llm-wiki --root /path/to/wiki serve
+llm-wiki --workspace backend serve
+llm-wiki serve --all
 ```
 
 多库页面使用 `/kbs/<id>`，API 使用 `/api/kbs/<id>/...`。每个知识库仍保留独立的
@@ -245,7 +247,7 @@ llm-wiki-cli serve --all
 ## 仓库结构
 
 ```
-llm-wiki-cli/
+llm-wiki/
 ├── package.json              # 根 workspace 脚本（dev/build/lint/format）
 ├── pnpm-workspace.yaml       # 声明 apps/* 与 packages/*
 ├── tsconfig.base.json        # 严格 TS 基础配置（共享）
@@ -353,7 +355,7 @@ pnpm --filter @llm-wiki/cli dev -- serve
 ## 调试与验证建议
 
 - **原生模块编译失败**：确保本机有 Python 与 C++ 编译工具链；macOS 一般有预编译产物，Linux/Windows 可能需源码编译。
-- **检索无结果**：先用 `llm-wiki-cli search <query> --json` 查看返回结构；中文查询可能因默认 FTS 分词限制而无法命中。
+- **检索无结果**：先用 `llm-wiki search <query> --json` 查看返回结构；中文查询可能因默认 FTS 分词限制而无法命中。
 - **端口占用**：`serve` 遇 `EADDRINUSE` 会给出友好提示，换端口 `--port` 即可。
 
 ## 许可证

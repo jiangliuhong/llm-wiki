@@ -13,5 +13,8 @@
 
 - [CLI 使用指南](./cli-usage.md)
 - [已知限制与注意事项](./known-limitations.md)
+- [知识图谱设计与关系审核](./wiki-graph.md)
+- [V1 改造状态](./migration-status.md)
+- [V1 后续实施计划](./roadmap-v1.md)
 
 > `architecture-v1.md`、`cli-design-v1.md` 与桌面端原型描述目标架构和后续迁移方案；CLI 使用指南与已知限制描述当前仓库已经实现的能力。二者不要混淆。

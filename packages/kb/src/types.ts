@@ -269,7 +269,7 @@ export interface SearchResult {
  * Provenance metadata recorded alongside an index. Stored as rows in the
  * `schema_meta` KV table and reassembled by {@link readIndexMetadata}.
  *
- * `sourceRevision`/`sourceBranch` are caller-supplied (llm-wiki-cli does not
+ * `sourceRevision`/`sourceBranch` are caller-supplied (llm-wiki does not
  * read git); `configHash` lets consumers detect when index-affecting config
  * has drifted from the stored index.
  */

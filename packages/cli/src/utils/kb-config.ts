@@ -12,7 +12,7 @@ export function resolveKbConfig(config: WikiConfig): KbConfig {
   // loadConfig always fills `kb`; guard for direct callers that built a config
   // without it.
   if (!kb) {
-    throw new Error('Config is missing "kb"; run "llm-wiki-cli init" to create a full config.');
+    throw new Error('Config is missing "kb"; run "llm-wiki init" to create a full config.');
   }
   return {
     include: [...kb.include],

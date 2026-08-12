@@ -2,11 +2,12 @@ import nodePath from "node:path";
 import { resolveDbPath } from "@llm-wiki/kb";
 import { WIKI_DIR_NAME, CONFIG_FILE_NAME } from "../types/config.js";
 import { resolveRegistryEntry } from "./registry.js";
+import { findWorkspaceManifest } from "./paths.js";
 
 /**
  * Global options that every subcommand inherits.
  *
- * `llm-wiki-cli` is deliberately repo-agnostic: it operates on a *directory*
+ * `llm-wiki` is deliberately repo-agnostic: it operates on a *directory*
  * (`--root`), an explicit index DB (`--db`), and an explicit config file
  * (`--config`). All three can also be supplied via environment variables so an
  * orchestrator (e.g. pi-agents) can set them once for a whole pipeline run
@@ -24,12 +25,15 @@ export const ENV = {
   db: "LLM_WIKI_DB",
   config: "LLM_WIKI_CONFIG",
   kb: "LLM_WIKI_KB",
+  workspace: "LLM_WIKI_WORKSPACE",
 } as const;
 
 /** Resolved global context shared by all subcommands. */
 export interface GlobalContext {
   /** Registered id, when the context came from --kb. */
   kbId?: string;
+  /** Canonical workspace id. `kbId` is retained for migration callers. */
+  workspaceId?: string;
   /** Absolute knowledge-base root directory. */
   root: string;
   /** Absolute SQLite DB path (explicit or derived from `root`). */
@@ -44,6 +48,7 @@ export interface RawGlobalOptions {
   db?: string;
   config?: string;
   kb?: string;
+  workspace?: string;
 }
 
 /**
@@ -53,13 +58,36 @@ export interface RawGlobalOptions {
  * `<root>/.llm-wiki/config.json` respectively.
  */
 export function resolveGlobalOptions(raw: RawGlobalOptions = {}): GlobalContext {
-  const kbId = raw.kb ?? process.env[ENV.kb];
-  const registered = kbId ? resolveRegistryEntry(kbId) : undefined;
-  const root = resolveAbsolute(raw.root, process.env[ENV.root], registered?.root ?? process.cwd());
+  const discovered = findWorkspaceManifest();
+  const requestedWorkspace =
+    raw.workspace ?? process.env[ENV.workspace] ?? raw.kb ?? process.env[ENV.kb];
+  const workspacePath = requestedWorkspace && looksLikePath(requestedWorkspace)
+    ? nodePath.resolve(process.cwd(), requestedWorkspace)
+    : undefined;
+  const pathWorkspace = workspacePath ? findWorkspaceManifest(workspacePath) : undefined;
+  const workspaceId = workspacePath
+    ? pathWorkspace?.manifest.id
+    : requestedWorkspace ?? discovered?.manifest.id;
+  const kbId = workspaceId;
+  const registered = workspacePath
+    ? workspaceId
+      ? tryResolveRegistryEntry(workspaceId)
+      : undefined
+    : requestedWorkspace
+    ? resolveRegistryEntry(requestedWorkspace)
+    : workspaceId
+      ? tryResolveRegistryEntry(workspaceId)
+      : undefined;
+  const root = resolveAbsolute(
+    raw.root,
+    process.env[ENV.root],
+    pathWorkspace?.root ?? workspacePath ?? registered?.root ?? discovered?.root ?? process.cwd(),
+  );
   const dbOverride = raw.db ?? process.env[ENV.db];
   const configOverride = raw.config ?? process.env[ENV.config];
   return {
     kbId,
+    workspaceId,
     root,
     dbPath: dbOverride
       ? resolveDbPath(root, dbOverride)
@@ -68,6 +96,26 @@ export function resolveGlobalOptions(raw: RawGlobalOptions = {}): GlobalContext 
       ? resolveConfigPath(root, configOverride)
       : (registered?.configPath ?? resolveConfigPath(root)),
   };
+}
+
+function looksLikePath(value: string): boolean {
+  return (
+    value === "." ||
+    value === ".." ||
+    value.startsWith(`.${nodePath.sep}`) ||
+    value.startsWith(`..${nodePath.sep}`) ||
+    nodePath.isAbsolute(value)
+  );
+}
+
+function tryResolveRegistryEntry(id: string): ReturnType<typeof resolveRegistryEntry> | undefined {
+  try {
+    return resolveRegistryEntry(id);
+  } catch {
+    // A workspace manifest is authoritative for local discovery even before
+    // the workspace has been added to the global registry.
+    return undefined;
+  }
 }
 
 /** Resolves an absolute config.json path from an optional override + root. */

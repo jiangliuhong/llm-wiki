@@ -14,7 +14,7 @@ import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-opt
 import { CliError, emitError, ExitCode } from "../utils/errors.js";
 
 /**
- * `llm-wiki-cli search <query> [--limit 8] [--json] [--graph] [--read-only]`
+ * `llm-wiki search <query> [--limit 8] [--json] [--graph] [--read-only]`
  *
  * Runs a hybrid (vector + FTS) search against the local knowledge base and
  * prints results to the terminal. `--json` emits a machine-readable result.

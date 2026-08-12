@@ -1,7 +1,12 @@
 import { fileURLToPath } from "node:url";
 import nodePath from "node:path";
 import nodeFs from "node:fs";
-import { CONFIG_FILE_NAME, WIKI_DIR_NAME } from "../types/config.js";
+import {
+  CONFIG_FILE_NAME,
+  WORKSPACE_FILE_NAME,
+  WIKI_DIR_NAME,
+  type WorkspaceManifest,
+} from "../types/config.js";
 
 /**
  * Resolves paths used across the CLI: where the user's wiki lives (current
@@ -25,6 +30,45 @@ export function getWikiDir(cwd: string = getCwd()): string {
 /** Absolute path to `.llm-wiki/config.json` in the current working directory. */
 export function getConfigPath(cwd: string = getCwd()): string {
   return nodePath.resolve(getWikiDir(cwd), CONFIG_FILE_NAME);
+}
+
+/** Absolute path to the workspace identity manifest. */
+export function getWorkspaceManifestPath(cwd: string = getCwd()): string {
+  return nodePath.resolve(getWikiDir(cwd), WORKSPACE_FILE_NAME);
+}
+
+/** Reads a valid workspace manifest, returning null for missing/invalid data. */
+export function readWorkspaceManifest(cwd: string = getCwd()): WorkspaceManifest | null {
+  const manifestPath = getWorkspaceManifestPath(cwd);
+  if (!nodeFs.existsSync(manifestPath)) return null;
+  try {
+    const parsed = JSON.parse(nodeFs.readFileSync(manifestPath, "utf8")) as Partial<WorkspaceManifest>;
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.id !== "string" ||
+      typeof parsed.title !== "string" ||
+      typeof parsed.root !== "string" ||
+      typeof parsed.createdAt !== "string"
+    ) return null;
+    return parsed as WorkspaceManifest;
+  } catch {
+    return null;
+  }
+}
+
+/** Finds the nearest workspace manifest while walking from cwd toward / . */
+export function findWorkspaceManifest(cwd: string = getCwd()): {
+  root: string;
+  manifest: WorkspaceManifest;
+} | null {
+  let current = nodePath.resolve(cwd);
+  while (true) {
+    const manifest = readWorkspaceManifest(current);
+    if (manifest) return { root: current, manifest };
+    const parent = nodePath.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 /** Whether the `.llm-wiki` directory already exists. */

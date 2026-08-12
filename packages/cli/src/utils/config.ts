@@ -129,7 +129,7 @@ export function loadConfig(cwd?: string): WikiConfig {
 export function loadConfigFromPath(configPath: string): WikiConfig {
   if (!nodeFs.existsSync(configPath)) {
     throw new ConfigError(
-      `Config file not found at ${configPath}.\n` + `Run "llm-wiki-cli init" first to create one.`,
+      `Config file not found at ${configPath}.\n` + `Run "llm-wiki init" first to create one.`,
       "ENOENT",
     );
   }

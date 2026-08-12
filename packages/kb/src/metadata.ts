@@ -12,7 +12,7 @@ import { EXPECTED_SCHEMA_VERSION } from "./types.js";
  * `validate`) reassemble it via {@link readIndexMetadata}.
  *
  * `sourceRevision` / `sourceBranch` are opaque strings supplied by the caller
- * — `llm-wiki-cli` deliberately has no concept of a repository, only a
+ * — `llm-wiki` deliberately has no concept of a repository, only a
  * directory. A higher-level orchestration layer (e.g. pi-agents) is expected
  * to pass the merged commit sha so answers can cite exactly which version of
  * the knowledge base they came from.

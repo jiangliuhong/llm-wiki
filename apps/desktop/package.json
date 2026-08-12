@@ -1,0 +1,25 @@
+{
+  "name": "@llm-wiki/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@heroui/react": "^3.2.1",
+    "@tauri-apps/api": "^2.8.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^6.0.3",
+    "vite": "^7.0.0"
+  }
+}

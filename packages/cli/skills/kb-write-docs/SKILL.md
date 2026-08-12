@@ -7,13 +7,13 @@ description: Inspect source material, split it into retrieval-focused documents,
 
 Organize documentation under `{{KB_INCLUDE}}/` by business domain. Stage new source material in `{{KB_STAGING}}/` and never write it into `{{KB_INCLUDE}}/` until the user confirms the proposed operation.
 
-The directories named above come from the project's `kb.include` configuration (filled in by `llm-wiki-cli init`). If they still show the raw placeholder form, read `.llm-wiki/config.json` to resolve the real content directory before writing.
+The directories named above come from the project's `kb.include` configuration (filled in by `llm-wiki init`). If they still show the raw placeholder form, read `.llm-wiki/config.json` to resolve the real content directory before writing.
 
 ## Workflow
 
 1. If new source material is not already under `{{KB_STAGING}}/`, place a copy there before processing it. Do not alter the original.
 2. Inspect the complete staged source and the relevant existing `{{KB_INCLUDE}}/` structure.
-3. Identify topic boundaries that improve `llm-wiki-cli search` retrieval quality.
+3. Identify topic boundaries that improve `llm-wiki search` retrieval quality.
 4. Present a confirmation request containing:
    - source path under `{{KB_STAGING}}/`;
    - proposed destination paths under `{{KB_INCLUDE}}/`;
@@ -25,7 +25,7 @@ The directories named above come from the project's `kb.include` configuration (
 5. Wait for explicit confirmation of the directory, names, split plan, and write details.
 6. Perform only the confirmed writes and preserve the confirmed structure and names.
 7. Show a diff of every change after writing.
-8. Ask whether to run `llm-wiki-cli index`. Do not index without explicit confirmation.
+8. Ask whether to run `llm-wiki index`. Do not index without explicit confirmation.
 
 ## Splitting rules
 

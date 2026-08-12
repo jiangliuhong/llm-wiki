@@ -1,0 +1,18 @@
+{
+  "name": "@llm-wiki/pi-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "llm-wiki-pi": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

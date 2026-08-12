@@ -67,7 +67,7 @@ test("vector dimension changes require reset and reset recreates the table", () 
   indexFiles({ projectRoot, config: config8, reset: true });
   assert.throws(
     () => indexFiles({ projectRoot, config: config16 }),
-    /Run "llm-wiki-cli index --reset"/,
+    /Run "llm-wiki index --reset"/,
   );
   const rebuilt = indexFiles({ projectRoot, config: config16, reset: true });
   assert.equal(rebuilt.added, 1);

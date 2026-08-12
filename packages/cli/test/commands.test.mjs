@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,7 +10,7 @@ import { migrateKbSchema } from "../dist/commands/serve.js";
 const cli = path.resolve("dist/index.js");
 
 function makeProject() {
-  const cwd = mkdtempSync(path.join(tmpdir(), "llm-wiki-cli-test-"));
+  const cwd = mkdtempSync(path.join(tmpdir(), "llm-wiki-test-"));
   const initialized = run(cwd, ["init", "--title", "Test"]);
   assert.equal(initialized.status, 0, initialized.stderr);
   return cwd;
@@ -27,6 +27,11 @@ function run(cwd, args, extraEnv = {}) {
 test("init installs the bundled project skills", () => {
   const cwd = makeProject();
 
+  const manifest = JSON.parse(readFileSync(path.join(cwd, ".llm-wiki", "workspace.json"), "utf8"));
+  assert.equal(manifest.version, 1);
+  assert.equal(manifest.title, "Test");
+  assert.match(manifest.id, /^[0-9a-f-]{36}$/);
+
   for (const skill of ["kb-write-docs", "kb-search-docs", "kb-infer-relations"]) {
     const skillFile = path.join(cwd, ".agents", "skills", skill, "SKILL.md");
     const metadataFile = path.join(cwd, ".agents", "skills", skill, "agents", "openai.yaml");
@@ -34,6 +39,16 @@ test("init installs the bundled project skills", () => {
     assert.equal(existsSync(metadataFile), true);
     assert.match(readFileSync(skillFile, "utf8"), new RegExp(`name: ${skill}`));
   }
+});
+
+test("workspace current resolves the nearest manifest and canonical workspace command", () => {
+  const cwd = makeProject();
+  const result = run(cwd, ["workspace", "current", "--json"]);
+  assert.equal(result.status, 0, result.stderr);
+  const current = JSON.parse(result.stdout);
+  assert.equal(current.title, "Test");
+  assert.equal(current.root, realpathSync(cwd));
+  assert.equal(current.resolvedBy, "cwd");
 });
 
 test("init adds missing skills without overwriting existing skills or config", () => {
@@ -86,7 +101,7 @@ test("search rejects malformed limits and empty queries", () => {
 });
 
 test("config errors exit with code 2 and emit structured JSON under --json", () => {
-  const cwd = mkdtempSync(path.join(tmpdir(), "llm-wiki-cli-test-"));
+  const cwd = mkdtempSync(path.join(tmpdir(), "llm-wiki-test-"));
   // No init → no config.
   const human = run(cwd, ["search", "anything"]);
   assert.equal(human.status, 2);
@@ -174,7 +189,7 @@ test("serve schema preparation upgrades a pre-graph database", () => {
 // --- P0: server-side index pipeline support -------------------------------
 
 test("--root points the CLI at a knowledge base outside the cwd", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "llm-wiki-cli-root-"));
+  const root = mkdtempSync(path.join(tmpdir(), "llm-wiki-root-"));
   // init writes config + content dir under --root, not under cwd.
   const initialized = run(tmpdir(), ["--root", root, "init", "--title", "Remote"]);
   assert.equal(initialized.status, 0, initialized.stderr);

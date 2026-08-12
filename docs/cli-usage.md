@@ -1,6 +1,6 @@
-# `llm-wiki-cli` 命令行使用手册
+# `llm-wiki` 命令行使用手册
 
-`llm-wiki-cli` 用于在本地初始化、索引、检索和浏览文档知识库。配置与索引数据默认保存在当前项目的 `.llm-wiki/` 目录中，不会上传到外部服务。
+`llm-wiki` 用于在本地初始化、索引、检索和浏览文档知识库。配置与索引数据默认保存在当前项目的 `.llm-wiki/` 目录中，不会上传到外部服务。
 
 ## 1. 环境与安装
 
@@ -18,8 +18,8 @@ bash install.sh
 安装完成后检查命令：
 
 ```bash
-llm-wiki-cli --version
-llm-wiki-cli --help
+llm-wiki --version
+llm-wiki --help
 ```
 
 不安装全局命令也可以在仓库根目录运行：
@@ -33,40 +33,41 @@ pnpm --filter @llm-wiki/cli... run build
 node packages/cli/dist/index.js <command>
 ```
 
-下文统一使用全局命令 `llm-wiki-cli`。
+下文统一使用全局命令 `llm-wiki`。
 
 ## 2. 快速开始
 
 进入准备作为知识库根目录的目录，然后依次执行：
 
 ```bash
-llm-wiki-cli init --title "团队知识库"
+llm-wiki init --title "团队知识库"
 
 # 将 Markdown、代码或文本文件放入 wiki/ 后建立索引
-llm-wiki-cli index
+llm-wiki index
 
 # 在终端检索
-llm-wiki-cli search "部署流程"
+llm-wiki search "部署流程"
 
 # 启动本地网页
-llm-wiki-cli serve
+llm-wiki serve
 ```
 
 默认网页地址为 <http://localhost:3000>。
 
-> 兼容模式下路径相对于当前目录解析；也可以使用 `--root` 或注册后的 `--kb <id>`，无需先切换到知识库目录。
+路径会从当前目录向上发现 `.llm-wiki/workspace.json`；也可以使用 `--root` 或注册后的 `--workspace <id>`，无需先切换到工作空间目录。
 
 ## 3. 全局选项
 
 ```text
-llm-wiki-cli [options] [command]
+llm-wiki [options] [command]
 ```
 
 | 选项              | 环境变量          | 说明                                                                     |
 | ----------------- | ----------------- | ------------------------------------------------------------------------ |
 | `-h, --help`      |                   | 显示帮助信息                                                             |
 | `-v, --version`   |                   | 显示当前版本                                                             |
-| `--kb <id>`       | `LLM_WIKI_KB`     | 使用全局注册表中的知识库 ID                                              |
+| `--workspace <id>` | `LLM_WIKI_WORKSPACE` | 使用全局注册表中的工作空间 ID                                         |
+| `--kb <id>`       | `LLM_WIKI_KB`     | 旧版知识库 ID 兼容参数                                                    |
 | `--root <path>`   | `LLM_WIKI_ROOT`   | 知识库根目录，默认为当前目录。决定 `kb.include` 的解析基准与默认 DB 位置 |
 | `--db <path>`     | `LLM_WIKI_DB`     | SQLite 索引文件路径，默认 `<root>/.llm-wiki/index.db`                    |
 | `--config <path>` | `LLM_WIKI_CONFIG` | 配置文件路径，默认 `<root>/.llm-wiki/config.json`                        |
@@ -74,7 +75,7 @@ llm-wiki-cli [options] [command]
 全局选项可放在子命令之前，优先级为：命令行标志 > 环境变量 > 默认值。这让编排层（如 pi-agents）可以一次性设置环境变量，在整条流水线中复用，而不必每次重复传参：
 
 ```bash
-llm-wiki-cli \
+llm-wiki \
   --root /path/to/knowledge-worktree \
   --config /path/to/config.json \
   --db /path/to/active.db \
@@ -84,10 +85,10 @@ llm-wiki-cli \
 查看某个子命令的帮助：
 
 ```bash
-llm-wiki-cli <command> --help
+llm-wiki <command> --help
 ```
 
-> 说明：`llm-wiki-cli` 没有仓库（git）的概念，只有目录的概念。所有 Git/MR/用户确认/索引切换由上层编排服务负责；本工具只负责「给定目录、配置、commit 标识，可靠地生成、验证和查询索引」。
+> 说明：`llm-wiki` 没有仓库（git）的概念，只有目录的概念。所有 Git/MR/用户确认/索引切换由上层编排服务负责；本工具只负责「给定目录、配置、commit 标识，可靠地生成、验证和查询索引」。
 
 ### 3.1 全局知识库注册表
 
@@ -96,30 +97,29 @@ llm-wiki-cli <command> --help
 `LLM_WIKI_REGISTRY` 指定其他文件，适合测试和隔离环境。
 
 ```bash
-llm-wiki-cli kb add backend /path/to/backend
-llm-wiki-cli kb add product /path/to/product
-llm-wiki-cli kb list
-llm-wiki-cli kb show backend
-llm-wiki-cli kb default backend
-llm-wiki-cli kb remove product
+llm-wiki workspace add backend /path/to/backend
+llm-wiki workspace add product /path/to/product
+llm-wiki workspace list
+llm-wiki workspace show backend
+llm-wiki workspace current
+llm-wiki workspace remove product
 ```
 
 `kb add` 只注册已经初始化的知识库，不移动文档或数据库。`kb remove` 也只删除注册信息，
 不会删除项目中的 `.llm-wiki`、索引或文档。注册后可从任意目录运行：
 
 ```bash
-llm-wiki-cli --kb backend index
-llm-wiki-cli --kb backend search "部署流程"
-llm-wiki-cli --kb backend status --json
+llm-wiki --workspace backend index
+llm-wiki --workspace backend search "部署流程"
+llm-wiki --workspace backend status --json
 ```
 
-显式的 `--root`、`--db`、`--config` 优先于注册表字段；未传 `--kb` 时继续使用当前目录，
-因此旧项目不需要迁移。
+显式的 `--root`、`--db`、`--config` 优先于注册表字段；未传 `--workspace` 时使用当前目录向上发现的工作空间。
 
 ## 4. `init`：初始化知识库
 
 ```text
-llm-wiki-cli init [--title <title>] [--port <port>]
+llm-wiki init [--title <title>] [--port <port>]
 ```
 
 在当前目录中完成以下初始化操作：
@@ -140,7 +140,7 @@ llm-wiki-cli init [--title <title>] [--port <port>]
 
 ```bash
 mkdir my-wiki && cd my-wiki
-llm-wiki-cli init --title "研发 Wiki" --port 3100
+llm-wiki init --title "研发 Wiki" --port 3100
 ```
 
 如果 `.llm-wiki/config.json` 或同名 skill 已存在，命令会保留已有内容；再次执行可补装缺失的内置 skill。
@@ -148,7 +148,7 @@ llm-wiki-cli init --title "研发 Wiki" --port 3100
 ## 5. `index`：建立或更新索引
 
 ```text
-llm-wiki-cli index [--reset] [--json] [--source-revision <sha>]
+llm-wiki index [--reset] [--json] [--source-revision <sha>]
                    [--source-branch <name>] [--output-db <path>] [--seed-db <path>]
 ```
 
@@ -182,13 +182,13 @@ llm-wiki-cli index [--reset] [--json] [--source-revision <sha>]
 
 ```bash
 # 日常增量更新
-llm-wiki-cli index
+llm-wiki index
 
 # 修改切片参数、向量维度或索引策略后全量重建
-llm-wiki-cli index --reset
+llm-wiki index --reset
 
 # 在新文件中构建索引（活跃索引不受影响），记录来源 commit
-llm-wiki-cli index \
+llm-wiki index \
   --output-db /path/to/indexes/abc123.tmp.db \
   --source-revision abc123 \
   --json
@@ -226,7 +226,7 @@ llm-wiki-cli index \
 ## 6. `search`：在终端检索
 
 ```text
-llm-wiki-cli search <query> [-l, --limit <n>] [--json] [--graph] [--read-only]
+llm-wiki search <query> [-l, --limit <n>] [--json] [--graph] [--read-only]
 ```
 
 参数与选项：
@@ -244,9 +244,9 @@ llm-wiki-cli search <query> [-l, --limit <n>] [--json] [--graph] [--read-only]
 示例：
 
 ```bash
-llm-wiki-cli search "安装步骤"
-llm-wiki-cli search "searchKnowledgeBase" --limit 3
-llm-wiki-cli search "配置文件" --json
+llm-wiki search "安装步骤"
+llm-wiki search "searchKnowledgeBase" --limit 3
+llm-wiki search "配置文件" --json
 ```
 
 普通输出中的位置和来源示例：
@@ -288,13 +288,13 @@ JSON 输出的顶层字段包括：
 脚本调用示例：
 
 ```bash
-llm-wiki-cli search "配置文件" --json | jq '.hits[] | {path, startLine, source}'
+llm-wiki search "配置文件" --json | jq '.hits[] | {path, startLine, source}'
 ```
 
 ## 7. `status`：查询索引状态
 
 ```text
-llm-wiki-cli status [--json] [--target-revision <sha>] [--no-config-check]
+llm-wiki status [--json] [--target-revision <sha>] [--no-config-check]
 ```
 
 报告当前索引 DB 的健康度与 provenance，并判断是否需要重建。专为编排层设计：比较索引记录的 `sourceRevision` 与期望的目标 revision，以及索引记录的 `configHash` 与当前配置的 hash。
@@ -309,7 +309,7 @@ DB 不存在是合法状态（非错误）：输出 `exists: false` 并以 exit 
 
 ```bash
 # 判断当前索引是否匹配目标分支最新 commit
-llm-wiki-cli status --json --target-revision "$MERGED_SHA"
+llm-wiki status --json --target-revision "$MERGED_SHA"
 ```
 
 输出示例（DB 存在但 revision 不匹配）：
@@ -330,7 +330,7 @@ llm-wiki-cli status --json --target-revision "$MERGED_SHA"
 ## 8. `validate`：校验候选索引
 
 ```text
-llm-wiki-cli validate --db <path> [--json]
+llm-wiki validate --db <path> [--json]
 ```
 
 在编排层把候选索引切换为正式索引之前，检查其完整性。`--db` 必填：validate 总是检查一个显式文件（通常是刚 `index --output-db` 产生的临时 DB）。
@@ -345,13 +345,13 @@ llm-wiki-cli validate --db <path> [--json]
 任一检查失败则以退出码 `3`（DB）退出，调用方可据此把原子切换的闸门建立在一次干净的 validate 上。
 
 ```bash
-llm-wiki-cli validate --db /path/to/indexes/abc123.tmp.db --json
+llm-wiki validate --db /path/to/indexes/abc123.tmp.db --json
 ```
 
 ## 9. `serve`：启动本地检索网页
 
 ```text
-llm-wiki-cli serve [-p, --port <port>] [--prod] [--all]
+llm-wiki serve [-p, --port <port>] [--prod] [--all]
 ```
 
 | 选项                | 默认值              | 说明                                               |
@@ -364,20 +364,20 @@ llm-wiki-cli serve [-p, --port <port>] [--prod] [--all]
 
 ```bash
 # 使用配置中的端口，以开发模式启动
-llm-wiki-cli serve
+llm-wiki serve
 
 # 临时改用 8080 端口
-llm-wiki-cli serve --port 8080
+llm-wiki serve --port 8080
 
 # 使用生产构建；需事先构建 Web 应用
 pnpm --filter @llm-wiki/web build
-llm-wiki-cli serve --prod
+llm-wiki serve --prod
 
 # 从其他目录启动一个已注册知识库
-llm-wiki-cli --kb backend serve
+llm-wiki --workspace backend serve
 
 # 启动全部已注册知识库
-llm-wiki-cli serve --all
+llm-wiki serve --all
 ```
 
 多库服务的页面路径为 `/kbs/<kbId>`，API 路径为 `/api/kbs/<kbId>/...`。文件、搜索、
@@ -433,7 +433,7 @@ llm-wiki-cli serve --all
 `kb` 或其内部字段缺失时会自动使用默认值。修改切片参数或向量维度后，应运行：
 
 ```bash
-llm-wiki-cli index --reset
+llm-wiki index --reset
 ```
 
 ## 11. 推荐工作流
@@ -444,15 +444,15 @@ llm-wiki-cli index --reset
 cd /path/to/my-wiki
 
 # 编辑或新增 wiki/ 下的文档后
-llm-wiki-cli index
-llm-wiki-cli search "要查找的内容"
-llm-wiki-cli serve
+llm-wiki index
+llm-wiki search "要查找的内容"
+llm-wiki serve
 ```
 
 在 CI 或其他脚本中检索：
 
 ```bash
-result="$(llm-wiki-cli search "发布检查" --limit 5 --json)"
+result="$(llm-wiki search "发布检查" --limit 5 --json)"
 printf '%s\n' "$result" | jq -e '.hits | length > 0'
 ```
 
@@ -460,7 +460,7 @@ printf '%s\n' "$result" | jq -e '.hits | length > 0'
 
 ### 退出码与 JSON 错误协议
 
-`llm-wiki-cli` 使用稳定的退出码，便于编排层判断失败类别：
+`llm-wiki` 使用稳定的退出码，便于编排层判断失败类别：
 
 | 退出码 | 含义                                                                |
 | ------ | ------------------------------------------------------------------- |
@@ -482,16 +482,16 @@ printf '%s\n' "$result" | jq -e '.hits | length > 0'
 
 ```bash
 # 1. 在 worktree 中构建新索引（不碰活跃索引）
-llm-wiki-cli --root /worktree --db /srv/active.db \
+llm-wiki --root /worktree --db /srv/active.db \
   index --output-db /srv/indexes/$SHA.tmp.db --source-revision "$SHA" --json
 
 # 2. 校验候选索引
-llm-wiki-cli validate --db /srv/indexes/$SHA.tmp.db --json
+llm-wiki validate --db /srv/indexes/$SHA.tmp.db --json
 
 # 3. 原子切换 active.db（由编排层负责，非本工具）
 
 # 4. 只读检索，标注来源 commit
-llm-wiki-cli --db /srv/active.db search "退款规则" --json --read-only
+llm-wiki --db /srv/active.db search "退款规则" --json --read-only
 ```
 
 ### 提示找不到配置文件
@@ -501,7 +501,7 @@ llm-wiki-cli --db /srv/active.db search "退款规则" --json --read-only
 确认当前目录正确，并先初始化知识库：
 
 ```bash
-llm-wiki-cli init
+llm-wiki init
 ```
 
 ### 搜索不到刚修改的内容
@@ -509,7 +509,7 @@ llm-wiki-cli init
 索引不会在文件变化时自动刷新。修改文档后重新执行：
 
 ```bash
-llm-wiki-cli index
+llm-wiki index
 ```
 
 ### 修改配置后出现索引异常
@@ -517,7 +517,7 @@ llm-wiki-cli index
 修改 `kb.chunk` 或 `kb.embedding.dimensions` 后，使用全量重建：
 
 ```bash
-llm-wiki-cli index --reset
+llm-wiki index --reset
 ```
 
 ### 中文查询或特殊字符查询效果不理想
@@ -533,5 +533,5 @@ llm-wiki-cli index --reset
 为本次启动指定其他端口：
 
 ```bash
-llm-wiki-cli serve --port 3001
+llm-wiki serve --port 3001
 ```

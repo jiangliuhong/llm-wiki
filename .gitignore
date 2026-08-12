@@ -147,4 +147,8 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Rust build artifacts
+/target/
+**/target/
 .zcode/

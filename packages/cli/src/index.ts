@@ -7,7 +7,7 @@ import { makeSearchCommand } from "./commands/search.js";
 import { makeRelationsCommand } from "./commands/relations.js";
 import { makeStatusCommand } from "./commands/status.js";
 import { makeValidateCommand } from "./commands/validate.js";
-import { makeKbCommand } from "./commands/kb.js";
+import { makeWorkspaceCommand } from "./commands/workspace.js";
 import { logger } from "./utils/logger.js";
 import { ExitCode } from "./utils/errors.js";
 import { readFileSync } from "node:fs";
@@ -16,7 +16,7 @@ import nodePath from "node:path";
 
 /**
  * CLI entrypoint. Compiles to `dist/index.js` with a `#!/usr/bin/env node`
- * shebang so the `llm-wiki-cli` bin works directly.
+ * shebang so the `llm-wiki` bin works directly.
  */
 
 function readVersion(): string {
@@ -43,14 +43,19 @@ function readVersion(): string {
 const program = new Command();
 
 program
-  .name("llm-wiki-cli")
-  .description("Index, search, and serve a local knowledge-base wiki (Next.js + HeroUI).")
-  .version(readVersion(), "-v, --version", "Print the llm-wiki-cli version")
+  .name("llm-wiki")
+  .description("Index, search, and serve a local knowledge-base wiki.")
+  .version(readVersion(), "-v, --version", "Print the llm-wiki version")
   .helpOption("-h, --help", "Show this help message")
   // Global options, declared on the program and readable from every subcommand
   // via `cmd.optsWithGlobals()`. Each is also bound to an environment variable
   // so an orchestrator can set it once for a whole pipeline run.
-  .addOption(new Option("--kb <id>", "Registered knowledge-base id.").env("LLM_WIKI_KB"))
+  .addOption(
+    new Option("--workspace <id>", "Registered workspace id.").env("LLM_WIKI_WORKSPACE"),
+  )
+  // `--kb` remains a migration alias for scripts using the pre-V1
+  // terminology. New integrations must use --workspace.
+  .addOption(new Option("--kb <id>", "Legacy knowledge-base id.").env("LLM_WIKI_KB"))
   .addOption(
     new Option("--root <path>", "Knowledge-base root directory (default: current directory).").env(
       "LLM_WIKI_ROOT",
@@ -80,7 +85,7 @@ program.addCommand(makeSearchCommand());
 program.addCommand(makeRelationsCommand());
 program.addCommand(makeStatusCommand());
 program.addCommand(makeValidateCommand());
-program.addCommand(makeKbCommand());
+program.addCommand(makeWorkspaceCommand());
 program.addCommand(makeServeCommand());
 
 // Propagate the exit override to every subcommand (including nested ones like

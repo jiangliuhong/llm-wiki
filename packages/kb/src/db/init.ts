@@ -53,7 +53,7 @@ export function initSchema(
       if (!options.resetVector) {
         throw new Error(
           `Vector index dimension changed from ${existingDimensions} to ${dimensions}. ` +
-            `Run "llm-wiki-cli index --reset" to rebuild the vector table.`,
+            `Run "llm-wiki index --reset" to rebuild the vector table.`,
         );
       }
       conn.db.exec("DROP TABLE vec_chunks");

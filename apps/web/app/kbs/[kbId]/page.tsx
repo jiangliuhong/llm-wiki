@@ -43,7 +43,7 @@ export default async function KnowledgeBasePage({
           No documents indexed yet
         </h1>
         <p className="mt-3 text-sm leading-6 text-slate-500">
-          Run <code>llm-wiki-cli --kb {kbId} index</code>, then refresh this page.
+          Run <code>llm-wiki --workspace {kbId} index</code>, then refresh this page.
         </p>
       </div>
     </div>

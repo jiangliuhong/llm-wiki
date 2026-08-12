@@ -200,6 +200,13 @@ llm-wiki
 │   ├── create
 │   └── history
 │
+├── relations
+│   ├── list
+│   ├── propose
+│   ├── approve
+│   ├── reject
+│   └── diagnostics
+│
 ├── import
 │   ├── plan
 │   ├── apply
@@ -297,6 +304,9 @@ llm-wiki search "pl_forecast_result_monthly" \
   --workspace pl-wiki \
   --limit 20 \
   --json
+
+# 正文命中之外附加一跳已批准关系
+llm-wiki search "pl_forecast_result_monthly" --graph --json
 ```
 
 结果必须包含：
@@ -312,7 +322,10 @@ preview
 score
 matchType
 contentHash
+graphContext
 ```
+
+`graphContext` 是独立数组；每项至少包含 `seedFileId`、`relatedFileId`、`relatedPath`、`relationType`、`direction` 和可定位的 `evidence`。它不会改变正文 `hits` 的排序和计数。
 
 ### 7.3 文档
 
@@ -616,12 +629,12 @@ packages/cli-darwin-arm64/
 ```text
 crates/
 ├── llm-wiki-core/
-├── llm-wiki-cli/        # 唯一 binary crate
+├── llm-wiki/            # 唯一 binary crate
 ├── llm-wiki-mcp/        # library crate
 └── llm-wiki-protocol/
 ```
 
-`llm-wiki-cli` 在匹配 `mcp serve` 时调用：
+`llm-wiki` 在匹配 `mcp serve` 时调用：
 
 ```text
 llm_wiki_mcp::serve(core, options)

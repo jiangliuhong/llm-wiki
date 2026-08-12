@@ -24,11 +24,11 @@ relations:
 - 普通 Markdown 本地链接和 `[[WikiLink]]` 生成 `references`。
 - URL、页内锚点和图片不生成文档关系。
 - WikiLink 只有在路径、slug、标题或文件名唯一匹配时才解析。
-- 无效和多义目标可通过 `llm-wiki-cli relations diagnostics` 查看。
+- 无效和多义目标可通过 `llm-wiki relations diagnostics` 查看。
 
 ## Agent 候选
 
-`llm-wiki-cli init` 会安装 `kb-infer-relations` skill。调用方 Agent 只生成候选文件，不直接修改数据库：
+`llm-wiki init` 会安装 `kb-infer-relations` skill。调用方 Agent 只生成候选文件，不直接修改数据库：
 
 ```json
 {

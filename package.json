@@ -1,8 +1,8 @@
 {
-  "name": "llm-wiki-cli",
+  "name": "llm-wiki",
   "version": "0.2.0",
   "private": true,
-  "description": "Local AI Wiki Platform CLI - scaffold and serve a local Wiki powered by Next.js + HeroUI.",
+  "description": "Local-first AI Wiki platform with a unified llm-wiki CLI.",
   "type": "module",
   "engines": {
     "node": ">=22"

@@ -9,7 +9,7 @@ import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-opt
 import { getRegistryPath, loadRegistry } from "../utils/registry.js";
 
 /**
- * `llm-wiki-cli serve`
+ * `llm-wiki serve`
  *
  * Loads `.llm-wiki/config.json` and boots the bundled Next.js app in-process
  * (no shell, no child_process).
@@ -18,7 +18,7 @@ export function makeServeCommand(): Command {
   const command = new Command("serve");
 
   command
-    .description("Serve the LLLM Wiki web app locally")
+    .description("Serve the LLM Wiki web app locally")
     .option("-p, --port <port>", "Override the port from .llm-wiki/config.json", (value: string) =>
       parsePort(value),
     )
@@ -78,7 +78,7 @@ async function runServeAll(options: ServeOptions): Promise<void> {
   const registry = loadRegistry();
   const entries = Object.entries(registry.knowledgeBases);
   if (entries.length === 0) {
-    logger.error('No registered knowledge bases. Run "llm-wiki-cli kb add <id> <root>" first.');
+    logger.error('No registered workspaces. Run "llm-wiki workspace add <id> <root>" first.');
     process.exitCode = 1;
     return;
   }

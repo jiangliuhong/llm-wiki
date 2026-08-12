@@ -1,10 +1,10 @@
 {
   "name": "@llm-wiki/cli",
   "version": "0.2.0",
-  "description": "Command-line tool to scaffold and serve a local LLLM Wiki.",
+  "description": "Command-line tool to scaffold and serve a local LLM Wiki.",
   "type": "module",
   "bin": {
-    "llm-wiki-cli": "./dist/index.js"
+    "llm-wiki": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

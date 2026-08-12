@@ -1,0 +1,15 @@
+[package]
+name = "llm-wiki"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "llm-wiki"
+path = "src/main.rs"
+
+[dependencies]
+llm-wiki-core = { path = "../llm-wiki-core" }
+llm-wiki-mcp = { path = "../llm-wiki-mcp" }
+llm-wiki-protocol = { path = "../llm-wiki-protocol" }
+serde_json.workspace = true

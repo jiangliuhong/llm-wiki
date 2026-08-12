@@ -2,7 +2,7 @@
 
 > 状态：Proposal  
 > 日期：2026-08-12  
-> 适用仓库：`jiangliuhong/llm-wiki-cli`
+> 适用仓库：`jiangliuhong/llm-wiki`
 
 ## 1. 背景与产品定位
 
@@ -43,7 +43,7 @@ llm-wiki mcp serve --stdio --workspace <workspace> --read-only
 - 云端账号、云同步和多用户实时协作；
 - 公网开放的远程 MCP 服务；
 - 独立发布 `llm-wiki-mcp` 命令或 `@llm-wiki/mcp-server` 包；
-- 兼容旧命令 `llm-wiki-cli`；
+- 不兼容旧命令 `llm-wiki-cli`，安装后唯一命令名为 `llm-wiki`；
 - Agent 不经确认直接删除、移动或覆盖文档；
 - 默认向 Pi 暴露 Bash、任意文件读写或整个用户目录；
 - 扫描 PDF OCR、图片 OCR、复杂表格还原等高成本能力；
@@ -177,6 +177,8 @@ Knowledge Core 负责确定性能力：
 - 工作空间注册、发现和解析；
 - 文档扫描和文本提取；
 - 结构化切片、索引和检索；
+- 文档关系解析、证据保存、局部图查询和关系诊断；
+- Agent 关系候选的持久化、审核和重建；
 - 文件列表、文档读取和引用定位；
 - 导入任务和索引任务；
 - 草稿持久化、Diff 和冲突检测；
@@ -315,6 +317,12 @@ llm-wiki draft apply draft-123 \
 | `chunks` | 文档切片和引用位置 |
 | `chunks_fts` | FTS5 索引 |
 | `chunk_embeddings` | 可选向量数据和模型版本 |
+| `relation_types` | 关系类型定义和方向语义 |
+| `document_relations` | 已发布的文档关系边 |
+| `relation_evidence` | 文档链接、frontmatter 或 Agent 证据 |
+| `relation_proposals` | 待审核的 Agent 关系候选 |
+| `unresolved_relation_refs` | 无效或多义关系引用诊断 |
+| `tags` / `document_tags` | 文档标签及标签关联 |
 | `assets` | 导入原文件 |
 | `ingestion_jobs` | 文件导入任务 |
 | `index_jobs` | 索引任务和错误 |
@@ -346,6 +354,7 @@ llm-wiki draft apply draft-123 \
   → 结构化切片
   → FTS5 索引
   → 可选 Embedding
+  → 显式关系解析与目标解析
   → 文档和索引状态入库
 ```
 
@@ -380,6 +389,8 @@ V1 应优先解决：
 6. 向量不可用时明确退化到 FTS-only，不返回伪语义结果。
 
 生成式问答由 Pi 完成，但搜索排序、引用定位和文档读取仍由 Core 完成。
+
+关系扩展必须与正文命中分离：搜索结果中的 `graphContext` 只表示经批准的一跳关联文档，不能伪装成正文命中。文档详情提供最多三层的局部图，Agent 推断关系只有审核通过后才能参与导航、图查询和搜索扩展。
 
 ## 10. 文件导入与受控写入
 
@@ -498,6 +509,8 @@ document_list
 document_search
 document_read
 document_read_range
+document_relations
+document_neighborhood
 ```
 
 草稿工具：
@@ -506,6 +519,7 @@ document_read_range
 document_draft_create
 document_draft_update
 document_draft_get
+relation_proposal_create
 ```
 
 V1 不向 Pi 暴露：
@@ -556,6 +570,8 @@ Host 与 Pi Runtime 使用 LF 分隔 JSONL，协议包含：
 - 工作空间管理；
 - 带引用的 Pi 对话；
 - 文件树、Markdown 阅读与编辑；
+- 文档关系侧栏、上游/下游和一跳局部图；
+- Agent 关系候选审核与 unresolved relation diagnostics；
 - 文件导入计划；
 - 草稿 Diff 和提交；
 - 索引、导入和 Pi 任务状态；
@@ -630,6 +646,7 @@ llm-wiki
 ├── search
 ├── status
 ├── document list|read|create|history
+├── relations list|propose|approve|reject|diagnostics
 ├── import plan|apply|status
 ├── ask
 ├── summarize
@@ -733,6 +750,8 @@ document_list
 document_search
 document_read
 index_status
+document_relations
+document_neighborhood
 ```
 
 受控写入：
@@ -743,6 +762,7 @@ document_draft_get
 document_draft_apply
 document_import
 index_run
+relation_proposal_create
 ```
 
 MCP 直接调用 Knowledge Core，不调用 Pi。
@@ -871,7 +891,7 @@ llm-wiki/
 │
 ├── crates/
 │   ├── llm-wiki-core/
-│   ├── llm-wiki-cli/               # 唯一 Rust 二进制
+│   ├── llm-wiki/                   # 唯一 Rust 二进制
 │   ├── llm-wiki-mcp/               # library crate，不生成独立命令
 │   └── llm-wiki-protocol/
 │
@@ -887,13 +907,13 @@ llm-wiki/
 └── docs/
 ```
 
-仓库名称可以暂时保持 `llm-wiki-cli`，但产品命令从新版本开始只使用 `llm-wiki`。
+仓库、产品和对外命令统一使用 `llm-wiki`；`.llm-wiki/` 仅作为工作空间内部数据目录保留。
 
 ## 18. 迁移计划
 
 ### Phase 0：接口和测试基线
 
-- 固化扫描、切片、索引和搜索 fixture；
+- 固化扫描、切片、索引、搜索和 graph fixture；
 - 定义 Workspace、Document、Chunk、Citation、Draft 和 Error Schema；
 - 定义 CLI JSON 与 Pi Host Bridge 协议版本；
 - 增加数据库 migration 机制；
@@ -910,7 +930,7 @@ llm-wiki/
 
 ### Phase 2：Rust Core 对齐
 
-- 迁移 scanner、chunker、reader、indexer、search；
+- 迁移 scanner、chunker、reader、indexer、search、relation parser 和 graph query；
 - 使用同一套 fixture 对比 TypeScript 与 Rust 行为；
 - 完成后停止在 Next.js API Routes 中增加新的核心逻辑。
 
@@ -928,6 +948,7 @@ llm-wiki/
 - HeroUI 桌面主题；
 - 工作空间切换；
 - 文档树、阅读、搜索；
+- 文档关系侧栏和关系审核；
 - 导入计划；
 - 草稿 Diff；
 - 索引和任务状态。
@@ -946,6 +967,7 @@ llm-wiki/
 - `llm-wiki mcp serve --stdio`；
 - `llm-wiki-mcp` library crate；
 - 显式工作空间范围；
+- graph 只读工具和 proposal 权限；
 - 只读、草稿和应用权限；
 - MCP 客户端配置生成；
 - 不发布独立 MCP npm 包和二进制。
@@ -1036,7 +1058,7 @@ stdout 必须保持纯 MCP 协议输出，日志写入 stderr。
 
 ## 22. 参考项目与文档
 
-- 当前仓库：<https://github.com/jiangliuhong/llm-wiki-cli>
+- 当前仓库：<https://github.com/jiangliuhong/llm-wiki>
 - DBX：<https://github.com/t8y2/dbx>
 - Pi：<https://pi.dev/docs/latest/rpc>
 - Pi SDK：<https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md>

@@ -15,7 +15,7 @@ import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-opt
 import { CliError, emitError, ExitCode } from "../utils/errors.js";
 
 /**
- * `llm-wiki-cli index [--reset] [--json] [--source-revision <sha>]
+ * `llm-wiki index [--reset] [--json] [--source-revision <sha>]
  *                     [--source-branch <name>] [--output-db <path>]
  *                     [--seed-db <previous.db>]`
  *
@@ -32,7 +32,7 @@ export function makeIndexCommand(): Command {
   const command = new Command("index");
 
   command
-    .description("Index wiki/ content into the local knowledge base (.llm-wiki/index.db)")
+    .description("Index workspace content into the local knowledge base (.llm-wiki/index.db)")
     .option("--reset", "Wipe the existing index before re-indexing everything", false)
     .option("--json", "Output a machine-readable result object", false)
     .option("--source-revision <sha>", "Record this revision (e.g. merged commit sha) in index metadata")

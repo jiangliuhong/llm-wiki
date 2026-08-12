@@ -14,7 +14,7 @@ import { resolveGlobalOptions, type RawGlobalOptions } from "../utils/global-opt
 import { CliError, emitError, ExitCode } from "../utils/errors.js";
 
 /**
- * `llm-wiki-cli status [--json] [--target-revision <sha>] [--no-config-check]`
+ * `llm-wiki status [--json] [--target-revision <sha>] [--no-config-check]`
  *
  * Reports the health and provenance of the current index DB. Designed for an
  * orchestrator (pi-agents) that needs to decide whether a rebuild is
@@ -73,7 +73,7 @@ function runStatus(options: StatusOptions, cmd: Command): void {
       return;
     }
     logger.info(`No index at ${ctx.dbPath}.`);
-    logger.info(`Run "llm-wiki-cli index" to build one.`);
+    logger.info(`Run "llm-wiki index" to build one.`);
     return;
   }
 
@@ -157,7 +157,7 @@ function runStatus(options: StatusOptions, cmd: Command): void {
   );
   if (mismatches.length > 0) {
     logger.warn(`  out of date: ${mismatches.join(", ")}`);
-    logger.warn(`  consider running "llm-wiki-cli index" to rebuild.`);
+    logger.warn(`  consider running "llm-wiki index" to rebuild.`);
   } else {
     logger.success("  index is up to date.");
   }
