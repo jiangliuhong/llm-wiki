@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LLM Wiki Desktop Prototype</title>
+  <style>
+    html,body{height:100%;margin:0;background:#eef1f7;font:14px system-ui,sans-serif}
+    body{display:grid;place-items:center;color:#5f6678}
+    .loading{padding:18px 22px;background:#fff;border:1px solid #e2e6ef;border-radius:12px;box-shadow:0 12px 34px rgba(25,32,56,.14)}
+  </style>
+</head>
+<body>
+  <div class="loading" id="status">正在加载 LLM Wiki 桌面端原型…</div>
+  <script src="./payload-01.js"></script>
+  <script src="./payload-02.js"></script>
+  <script src="./payload-03.js"></script>
+  <script src="./payload-04.js"></script>
+  <script src="./payload-05.js"></script>
+  <script>
+    (async () => {
+      const payload = window.__LLM_WIKI_PROTO_PAYLOAD__;
+      if (!payload) throw new Error("原型数据不存在");
+      const compressed = Uint8Array.from(atob(payload), c => c.charCodeAt(0));
+      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+      const html = await new Response(stream).text();
+      document.open();
+      document.write(html);
+      document.close();
+    })().catch((error) => {
+      const status = document.getElementById("status");
+      status.textContent = "原型加载失败：" + error.message;
+    });
+  </script>
+</body>
+</html>
