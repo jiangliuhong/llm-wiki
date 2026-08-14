@@ -1,0 +1,4 @@
+interface:
+  display_name: "Infer Wiki Relations"
+  short_description: "Infer auditable relationships between local Wiki documents"
+  default_prompt: "Use $kb-infer-relations to analyze Wiki documents and create reviewable relation proposals."

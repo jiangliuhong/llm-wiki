@@ -10,6 +10,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
+#[macro_use]
+extern crate lazy_static;
+
+pub mod store;
+pub mod scanner;
+pub mod chunker;
+pub mod document_parser;
+pub mod indexer;
+
 pub const WORKSPACE_MANIFEST_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
@@ -24,6 +33,12 @@ pub enum CoreError {
     InvalidGraphDepth,
     #[error("storage error: {0}")]
     Storage(String),
+}
+
+impl From<rusqlite::Error> for CoreError {
+    fn from(error: rusqlite::Error) -> Self {
+        CoreError::Storage(error.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

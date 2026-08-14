@@ -1,0 +1,4 @@
+interface:
+  display_name: "KB Write Docs"
+  short_description: "Split and write source files into the local wiki safely"
+  default_prompt: "Use $kb-write-docs to inspect a source file, propose a retrieval-focused split plan, and write it into wiki after confirmation."

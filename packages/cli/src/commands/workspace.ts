@@ -2,9 +2,12 @@ import { Command } from "commander";
 import nodeFs from "node:fs";
 import nodePath from "node:path";
 import { randomUUID } from "node:crypto";
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { getDefaultConfig, saveConfig } from "../utils/config.js";
 import { getWorkspaceManifestPath } from "../utils/paths.js";
 import type { WorkspaceManifest } from "../types/config.js";
+import { WIKI_DIR_NAME, WORKSPACE_FILE_NAME } from "../types/config.js";
 import { logger } from "../utils/logger.js";
 import {
   assertKnowledgeBaseId,
@@ -194,6 +197,53 @@ export function makeWorkspaceCommand(): Command {
     });
 
   command
+    .command("purge")
+    .description("Delete a workspace's on-disk metadata and remove its registry entry")
+    .argument("<id>")
+    .option("--include-wiki", "Also delete the wiki/ document directory", false)
+    .option("--force", "Skip the interactive confirmation prompt", false)
+    .action(async (id: string, options: PurgeOptions) => {
+      const registry = loadRegistry();
+      const entry = resolveRegistryEntry(id, registry);
+      const metadataDir = nodePath.join(entry.root, WIKI_DIR_NAME);
+      const manifestPath = nodePath.join(metadataDir, WORKSPACE_FILE_NAME);
+      if (!nodeFs.existsSync(manifestPath)) {
+        throw new Error(
+          `Workspace manifest not found at ${manifestPath}; nothing was deleted. Use "llm-wiki workspace remove ${id}" to drop the registry entry.`,
+        );
+      }
+
+      const targets = [metadataDir];
+      if (options.includeWiki) targets.push(nodePath.join(entry.root, "wiki"));
+
+      if (!options.force) {
+        const summary = targets.map((target) => `  - ${target}`).join("\n");
+        logger.warn(`About to delete:\n${summary}`);
+        const rl = readline.createInterface({ input, output });
+        let answer: string;
+        try {
+          answer = await rl.question(`Type "yes" to purge workspace "${id}": `);
+        } finally {
+          rl.close();
+        }
+        if (answer.trim().toLowerCase() !== "yes") {
+          logger.info("Aborted; nothing was deleted.");
+          return;
+        }
+      }
+
+      for (const target of targets) {
+        nodeFs.rmSync(target, { recursive: true, force: true });
+      }
+      delete registry.knowledgeBases[id];
+      if (registry.defaultKb === id) delete registry.defaultKb;
+      saveRegistry(registry);
+      logger.success(
+        `Purged workspace "${id}"; deleted ${targets.length} path(s) under ${entry.root}.`,
+      );
+    });
+
+  command
     .command("default")
     .description("Choose the default knowledge base for multi-library serving")
     .argument("<id>")
@@ -225,5 +275,10 @@ function ensureWorkspaceManifest(root: string, id: string, title: string): void 
 interface AddOptions {
   config?: string;
   db?: string;
+  force?: boolean;
+}
+
+interface PurgeOptions {
+  includeWiki?: boolean;
   force?: boolean;
 }

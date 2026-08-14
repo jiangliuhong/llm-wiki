@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Minimal desktop capability: core window/event APIs only.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }
