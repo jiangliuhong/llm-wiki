@@ -3,15 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "llm-wiki-pi": "./dist/index.js" },
+  "bin": {
+    "llm-wiki-pi": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:bundle": "tsc -p tsconfig.json && node scripts/bundle.mjs",
     "dev": "tsx src/index.ts",
     "test": "node --test test/*.test.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.84.2",
+    "@earendil-works/pi-coding-agent": "^0.84.2",
+    "typebox": "^1.3.14"
+  },
   "devDependencies": {
     "@types/node": "^26.0.0",
+    "esbuild": "^0.28.2",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }

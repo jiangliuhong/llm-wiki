@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import RelationsView, { inTauriRuntime } from "./RelationsView";
+import SettingsView from "./SettingsView";
 
 type View = "chat" | "documents" | "relations" | "imports" | "drafts" | "tasks" | "settings";
 
@@ -104,7 +106,6 @@ type LoadState<T> =
   | { status: "error"; message: string };
 
 type WorkspaceMode = "recent" | "open" | "create";
-type RuntimeMode = "pi" | "preview";
 
 const WORKSPACE_STORAGE_KEY = "llm-wiki.desktop.workspaces";
 
@@ -160,8 +161,6 @@ export default function App(): React.ReactElement {
   const [knownWorkspaces, setKnownWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("recent");
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
-  const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("pi");
   const [workspacePath, setWorkspacePath] = useState("");
   const [workspaceTitle, setWorkspaceTitle] = useState("我的知识工作区");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -178,7 +177,18 @@ export default function App(): React.ReactElement {
       setWorkspace(previewWorkspace);
       return;
     }
-    void invoke<WorkspaceInfo>("workspace_current")
+    // Prefer the most recently used workspace over the cwd-derived one:
+    // model configs (API keys) live in <root>/.llm-wiki/config.json, so
+    // silently switching roots on launch made saved settings "disappear".
+    const restoreRecentWorkspace = (): Promise<WorkspaceInfo | null> => {
+      const recent = stored[0];
+      if (!recent) return Promise.resolve(null);
+      return invoke<WorkspaceInfo>("workspace_open", { root: recent.root })
+        .then((info) => (info.resolvedBy === "manual" ? info : null))
+        .catch(() => null);
+    };
+    void restoreRecentWorkspace()
+      .then((restored) => (restored ? Promise.resolve(restored) : invoke<WorkspaceInfo>("workspace_current")))
       .then((current) => {
         setWorkspace(current);
         // Only remember workspaces that resolved to a real manifest. A
@@ -348,11 +358,6 @@ export default function App(): React.ReactElement {
     }
   };
 
-  const title = useMemo(
-    () => navigation.find((item) => item.id === view)?.label ?? "LLM Wiki",
-    [view],
-  );
-
   const resizeSidebar = (clientX: number): void => {
     setSidebarWidth(Math.min(420, Math.max(190, clientX)));
   };
@@ -363,7 +368,7 @@ export default function App(): React.ReactElement {
         <aside className="sidebar">
           <div className="sidebar-header">
             <div className="workspace-selector">
-              <button className="workspace-identity" aria-label="切换工作空间" aria-expanded={workspaceMenuOpen} onClick={() => { setWorkspaceMenuOpen((open) => !open); setRuntimeMenuOpen(false); setWorkspaceError(null); }}>
+              <button className="workspace-identity" aria-label="切换工作空间" aria-expanded={workspaceMenuOpen} onClick={() => { setWorkspaceMenuOpen((open) => !open); setWorkspaceError(null); }}>
                 <span className="workspace-avatar">{workspace?.title.slice(0, 2) ?? "LW"}</span>
                 <span>
                   <strong>{workspace?.title ?? "LLM Wiki"}</strong>
@@ -424,23 +429,7 @@ export default function App(): React.ReactElement {
         />
 
         <section className="main-area">
-          <header className="workspace-toolbar">
-            <div className="toolbar-title">
-              <span>{navigation.find((item) => item.id === view)?.icon}</span>
-              <strong>{title}</strong>
-              <small>{workspace?.title ?? "LLM Wiki"}</small>
-            </div>
-            <div className="toolbar-actions">
-              <button className="search-button" aria-label="搜索工作空间" onClick={focusSearch}><span>⌕</span>搜索 <kbd>⌘ K</kbd></button>
-              <span className="connection-pill"><span className="status-dot" />本地</span>
-              <div className="runtime-selector">
-                <button className="runtime-picker" aria-label="选择 Pi Runtime" aria-expanded={runtimeMenuOpen} onClick={() => { setRuntimeMenuOpen((open) => !open); setWorkspaceMenuOpen(false); }}>✦ Pi <span>⌄</span></button>
-                {runtimeMenuOpen && <RuntimeMenu selected={runtimeMode} onSelect={(mode) => { setRuntimeMode(mode); setRuntimeMenuOpen(false); }} />}
-              </div>
-              <button className="icon-button" aria-label="更多操作">•••</button>
-            </div>
-          </header>
-          <div className={view === "chat" || view === "documents" || view === "relations" ? "content-pane documents-pane" : "content-pane"}>
+          <div className={view === "chat" || view === "documents" || view === "relations" || view === "settings" ? "content-pane documents-pane" : "content-pane"}>
             {error && <div className="error-banner">Core 尚未连接：{error}</div>}
             {view === "chat" && <ChatView workspace={workspace} focusTrigger={searchFocusTrigger} onOpenDocument={(fileId) => { setPendingDocFileId(fileId); setView("documents"); }} />}
             {view === "documents" && <DocumentsView workspace={workspace} focusFileId={pendingDocFileId} onAskAI={() => setView("chat")} />}
@@ -448,7 +437,7 @@ export default function App(): React.ReactElement {
             {view === "imports" && <ImportsView workspace={workspace} onImported={() => setStatsRefreshKey((k) => k + 1)} />}
             {view === "drafts" && <DraftsView workspace={workspace} />}
             {view === "tasks" && <TasksView workspace={workspace} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
-            {view === "settings" && <SettingsView workspace={workspace} kbStats={kbStats} />}
+            {view === "settings" && <SettingsView workspace={workspace} kbStats={kbStats} knownWorkspaceCount={knownWorkspaces.length} onOpenWorkspaceMenu={() => setWorkspaceMenuOpen(true)} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
           </div>
         </section>
       </div>
@@ -554,15 +543,6 @@ function WorkspaceMenu({ mode, setMode, workspace, workspaces, onSelect, onDelet
   </div>;
 }
 
-function RuntimeMenu({ selected, onSelect }: { selected: RuntimeMode; onSelect: (mode: RuntimeMode) => void }): React.ReactElement {
-  return <div className="runtime-menu" role="dialog" aria-label="Pi Runtime 选择器">
-    <div className="runtime-menu-header"><strong>Pi Runtime</strong><span className="runtime-badge"><span className="online-dot" />已连接</span></div>
-    <button className={selected === "pi" ? "runtime-entry active" : "runtime-entry"} onClick={() => onSelect("pi")}><span className="runtime-entry-icon">✦</span><span><strong>Host Bridge</strong><small>Host Tools only · 只读</small></span>{selected === "pi" && <span className="workspace-check">✓</span>}</button>
-    <button className={selected === "preview" ? "runtime-entry active" : "runtime-entry"} onClick={() => onSelect("preview")}><span className="runtime-entry-icon preview">◌</span><span><strong>离线预览</strong><small>仅查看界面 · 不调用 Core</small></span>{selected === "preview" && <span className="workspace-check">✓</span>}</button>
-    <div className="runtime-menu-note">Bash、Write、Edit 默认禁用。外部 Agent 只能检索、读取和查看关系图谱。</div>
-  </div>;
-}
-
 // --- AI chat page: helpers + sub-components (layout mirrors the documents page)
 
 let uidCounter = 0;
@@ -573,7 +553,16 @@ function uid(): string {
 
 type ChatAnswer =
   | { kind: "pending" }
-  | { kind: "results"; hits: SearchHit[] }
+  | { kind: "results"; hits: SearchHit[]; note?: string }
+  | {
+      kind: "pi";
+      text: string;
+      /** Reasoning trace streamed via thinking_delta (empty for providers without it). */
+      thinking: string;
+      streaming: boolean;
+      phase: "thinking" | "answering" | "complete";
+      errorMessage?: string;
+    }
   | { kind: "error"; message: string };
 
 interface ChatMessage {
@@ -588,6 +577,8 @@ interface ChatConversation {
   id: string;
   title: string;
   workspaceId: string;
+  /** Pi Runtime session backing this conversation (set on first Pi answer). */
+  piSessionId?: string;
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
@@ -642,6 +633,8 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
   const [filter, setFilter] = useState<"all" | "today" | "week">("all");
   const [query, setQuery] = useState("");
   const [sending, setSending] = useState(false);
+  const activePiSessionRef = useRef<string | null>(null);
+  const [modelReady, setModelReady] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
@@ -655,18 +648,35 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
     setHydratedScope(scopeId);
   }, [scopeId]);
 
+  // Track whether a Pi model is configured so the composer can say which
+  // mode (generative Q&A vs keyword search) a question will use.
+  useEffect(() => {
+    if (!workspace || !inTauriRuntime()) {
+      setModelReady(false);
+      return;
+    }
+    let cancelled = false;
+    void invoke<{ provider: string; id: string } | null>("pi_config_get", { root: workspace.root })
+      .then((model) => { if (!cancelled) setModelReady(Boolean(model?.provider && model?.id)); })
+      .catch(() => { if (!cancelled) setModelReady(false); });
+    return () => { cancelled = true; };
+  }, [workspace]);
+
   // Persist every change back to localStorage. Storage is shared across
   // workspaces, so other scopes' conversations must be kept intact — and
   // writes are skipped until the load above has landed for this scope.
+  // While a Pi answer is streaming, writes are deferred: serializing every
+  // token delta would freeze the UI.
+  const isStreamingPi = conversations.some((c) => c.messages.some((m) => m.answer?.kind === "pi" && m.answer.streaming));
   useEffect(() => {
-    if (hydratedScope !== scopeId) return;
+    if (hydratedScope !== scopeId || isStreamingPi) return;
     try {
       const others = readStoredConversations().filter((c) => c.workspaceId !== scopeId);
       localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify([...others, ...conversations.slice(0, CHAT_STORAGE_LIMIT)]));
     } catch {
       // localStorage is optional in embedded previews.
     }
-  }, [conversations, scopeId, hydratedScope]);
+  }, [conversations, scopeId, hydratedScope, isStreamingPi]);
 
   // When focusTrigger changes (⌘K or search button clicked), focus the composer.
   useEffect(() => {
@@ -690,8 +700,132 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
     }));
   };
 
-  // Asking a question appends a user message plus a pending assistant reply;
-  // the FTS5 search results become the reply's citations.
+  // Synchronous sessionId → message map so streaming events route without
+  // reading React state. A freshly created conversation's `piSessionId` may
+  // not be committed yet when the first deltas arrive, which used to drop
+  // them; this map is registered before `pi_prompt` is even invoked.
+  const streamTargets = useRef<Map<string, { conversationId: string; messageId: string }>>(new Map());
+
+  // Append one Pi delta to the registered message. `field` selects the answer
+  // text or the thinking trace. `updatedAt` is left untouched: touching it per
+  // delta would re-sort and re-group the whole sidebar list on every flush;
+  // send / completion / failure already set it.
+  const appendDelta = (sessionId: string, field: "text" | "thinking", delta: string): void => {
+    if (!delta) return;
+    const target = streamTargets.current.get(sessionId);
+    if (!target) return;
+    setConversations((previous) => previous.map((conversation) => {
+      if (conversation.id !== target.conversationId) return conversation;
+      return {
+        ...conversation,
+        messages: conversation.messages.map((message) => {
+          if (message.id !== target.messageId) return message;
+          const answer = message.answer;
+          if (answer?.kind !== "pi") return message;
+          return {
+            ...message,
+            answer: {
+              ...answer,
+              [field]: (answer[field] ?? "") + delta,
+            },
+          };
+        }),
+      };
+    }));
+  };
+
+  // Token deltas arrive one per event; a state update per delta would freeze
+  // the UI on long answers. Buffer per session and flush on a fixed interval
+  // (not requestAnimationFrame): ~12 updates per second reads as smooth
+  // streaming while capping the React work per second.
+  const FLUSH_INTERVAL_MS = 80;
+  const deltaBuffer = useRef<Map<string, { text: string; thinking: string }>>(new Map());
+  const flushTimer = useRef<number | null>(null);
+
+  const flushDeltaBuffers = (): void => {
+    const buffered = deltaBuffer.current;
+    if (buffered.size === 0) return;
+    const entries = [...buffered];
+    buffered.clear();
+    setConversations((previous) => {
+      let next = previous;
+      for (const [sessionId, buffer] of entries) {
+        const target = streamTargets.current.get(sessionId);
+        if (!target || (!buffer.text && !buffer.thinking)) continue;
+        next = next.map((conversation) => {
+          if (conversation.id !== target.conversationId) return conversation;
+          return {
+            ...conversation,
+            messages: conversation.messages.map((message) => {
+              if (message.id !== target.messageId) return message;
+              const answer = message.answer;
+              if (answer?.kind !== "pi") return message;
+              return {
+                ...message,
+                answer: {
+                  ...answer,
+                  thinking: (answer.thinking ?? "") + buffer.thinking,
+                  text: answer.text + buffer.text,
+                  // First visible answer text ends the "thinking" phase.
+                  phase: buffer.text ? "answering" as const : answer.phase,
+                },
+              };
+            }),
+          };
+        });
+      }
+      return next;
+    });
+  };
+
+  const scheduleFlush = (): void => {
+    if (flushTimer.current !== null) return;
+    flushTimer.current = window.setTimeout(() => {
+      flushTimer.current = null;
+      flushDeltaBuffers();
+    }, FLUSH_INTERVAL_MS);
+  };
+
+  useEffect(() => () => {
+    if (flushTimer.current !== null) window.clearTimeout(flushTimer.current);
+  }, []);
+
+  // Drain one session's buffered deltas into the message (used before
+  // finalizing a prompt) and return what was drained.
+  const drainDeltaBuffer = (sessionId: string): { text: string; thinking: string } => {
+    const buffer = deltaBuffer.current.get(sessionId) ?? { text: "", thinking: "" };
+    deltaBuffer.current.delete(sessionId);
+    if (buffer.text) appendDelta(sessionId, "text", buffer.text);
+    if (buffer.thinking) appendDelta(sessionId, "thinking", buffer.thinking);
+    return buffer;
+  };
+
+  // Pi Runtime streaming events (text/thinking deltas etc.) forwarded by the
+  // Rust host. Runtime-side errors (model call failures) arrive as `error`
+  // events; keep them keyed by Pi session so the finalize/catch path can
+  // surface them.
+  const piErrors = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!inTauriRuntime()) return;
+    const unlisten = listen<{ sessionId?: string; event?: { type: string; delta?: string; message?: string } }>("pi-event", (event) => {
+      const payload = event.payload;
+      if (!payload?.event || typeof payload.sessionId !== "string") return;
+      if ((payload.event.type === "text_delta" || payload.event.type === "thinking_delta") && typeof payload.event.delta === "string") {
+        const buffer = deltaBuffer.current.get(payload.sessionId) ?? { text: "", thinking: "" };
+        if (payload.event.type === "text_delta") buffer.text += payload.event.delta;
+        else buffer.thinking += payload.event.delta;
+        deltaBuffer.current.set(payload.sessionId, buffer);
+        scheduleFlush();
+      } else if (payload.event.type === "error" && typeof payload.event.message === "string") {
+        piErrors.current.set(payload.sessionId, payload.event.message);
+      }
+    });
+    return () => { void unlisten.then((fn) => fn()); };
+  }, []);
+
+  // Asking a question appends a user message plus a pending assistant reply.
+  // With a Pi model configured, the reply streams from the Pi Runtime sidecar;
+  // otherwise it falls back to FTS5 search results.
   const send = async (): Promise<void> => {
     const text = query.trim();
     if (!text || !workspace || sending) return;
@@ -700,6 +834,15 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
     const now = Date.now();
     const convId = activeId ?? uid();
     const assistantId = uid();
+    let usePi = false;
+    let modelConfigured = false;
+    try {
+      if (inTauriRuntime()) {
+        const model = await invoke<{ provider: string; id: string } | null>("pi_config_get", { root: workspace.root });
+        modelConfigured = Boolean(model?.provider && model?.id);
+        usePi = modelConfigured;
+      }
+    } catch { usePi = false; }
     setConversations((previous) => {
       const existing = previous.find((c) => c.id === convId);
       const base: ChatConversation = existing ?? {
@@ -713,14 +856,150 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
       const messages: ChatMessage[] = [
         ...base.messages,
         { id: uid(), role: "user", text, createdAt: now },
-        { id: assistantId, role: "assistant", text: "", answer: { kind: "pending" }, createdAt: now },
+        {
+          id: assistantId,
+          role: "assistant",
+          text: "",
+          answer: usePi
+            ? { kind: "pi", text: "", thinking: "", streaming: true, phase: "thinking" }
+            : { kind: "pending" },
+          createdAt: now,
+        },
       ];
       return [{ ...base, messages, updatedAt: now }, ...previous.filter((c) => c.id !== convId)];
     });
     setActiveId(convId);
+    if (usePi) {
+      let piSessionId: string | undefined;
+      try {
+        piSessionId = conversations.find((c) => c.id === convId)?.piSessionId;
+        if (!piSessionId) {
+          const created = await invoke<{ output?: { sessionId?: string } } & Record<string, unknown>>("pi_session_new", { root: workspace.root, title: text.slice(0, 30) });
+          piSessionId = created?.output?.sessionId;
+          if (!piSessionId) throw new Error("Pi 会话创建失败");
+          setConversations((previous) => previous.map((c) => c.id === convId ? { ...c, piSessionId } : c));
+        }
+        activePiSessionRef.current = piSessionId;
+        // Register the stream target before the prompt so deltas emitted the
+        // instant the model responds land on this message (new conversations
+        // may not have `piSessionId` committed to state yet).
+        streamTargets.current.set(piSessionId, { conversationId: convId, messageId: assistantId });
+        const sessionId = piSessionId;
+        const runPrompt = (): Promise<{ output?: { text?: string } } | undefined> =>
+          invoke("pi_prompt", { root: workspace.root, sessionId, text });
+        let promptResult: { output?: { text?: string } } | undefined;
+        try {
+          promptResult = await runPrompt();
+        } catch (reason: unknown) {
+          const detail = String(reason);
+          // A restart (or sidecar crash) wipes in-memory sessions; rebuild the
+          // Pi session once and replay the question instead of failing blank.
+          // "cannot be restored" covers persisted sessions whose API key is
+          // only available via the config the new-session request carries.
+          const recoverable = detail.includes("does not exist")
+            || detail.toUpperCase().includes("PI_SESSION_NOT_FOUND")
+            || detail.includes("cannot be restored");
+          if (piSessionId && recoverable) {
+            const created = await invoke<{ output?: { sessionId?: string } } & Record<string, unknown>>("pi_session_new", { root: workspace.root, title: text.slice(0, 30) });
+            const rebuilt = created?.output?.sessionId;
+            if (!rebuilt) throw new Error(`Pi 会话恢复失败：${detail}`);
+            streamTargets.current.delete(piSessionId);
+            piSessionId = rebuilt;
+            activePiSessionRef.current = rebuilt;
+            streamTargets.current.set(rebuilt, { conversationId: convId, messageId: assistantId });
+            setConversations((previous) => previous.map((c) => c.id === convId ? { ...c, piSessionId: rebuilt } : c));
+            promptResult = await invoke<{ output?: { text?: string } } | undefined>("pi_prompt", { root: workspace.root, sessionId: rebuilt, text });
+          } else {
+            throw reason;
+          }
+        }
+        // Flush any deltas still sitting in the buffer, then finalize the
+        // message while preserving the streamed text (patchAnswer would wipe it).
+        const leftover = drainDeltaBuffer(piSessionId);
+        // Providers that answer without streaming deltas deliver the final
+        // text in the completion; use it when nothing streamed.
+        const fallbackText = promptResult?.output?.text ?? "";
+        // The runtime can report a late failure (error event) after the invoke
+        // resolved, or resolve with no text at all — don't let either pass as
+        // a successful empty answer.
+        const runtimeError = piErrors.current.get(piSessionId);
+        if (runtimeError && !fallbackText && !leftover.text) {
+          piErrors.current.delete(piSessionId);
+          throw new Error(runtimeError);
+        }
+        piErrors.current.delete(piSessionId);
+        setConversations((previous) => previous.map((c) => {
+          if (c.id !== convId) return c;
+          const index = c.messages.findIndex((m) => m.id === assistantId);
+          if (index < 0) return c;
+          const message = c.messages[index]!;
+          const answer = message.answer;
+          if (answer?.kind !== "pi") return c;
+          const messages = [...c.messages];
+          const finalText = answer.text || fallbackText;
+          messages[index] = { ...message, text: finalText, answer: { ...answer, text: finalText, streaming: false, phase: "complete" } };
+          return { ...c, messages, updatedAt: Date.now() };
+        }));
+      } catch (reason: unknown) {
+        // Prefer the runtime-side error event (actual model failure reason);
+        // fall back to the invoke rejection message.
+        const detail = (piSessionId && piErrors.current.get(piSessionId)) ?? String(reason);
+        // Keep any partial answer (and thinking) that already streamed before
+        // the failure.
+        const leftover = piSessionId
+          ? (deltaBuffer.current.get(piSessionId) ?? { text: "", thinking: "" })
+          : { text: "", thinking: "" };
+        if (piSessionId) {
+          deltaBuffer.current.delete(piSessionId);
+          piErrors.current.delete(piSessionId);
+        }
+        setConversations((previous) => previous.map((c) => {
+          if (c.id !== convId) return c;
+          const index = c.messages.findIndex((m) => m.id === assistantId);
+          if (index < 0) return c;
+          const message = c.messages[index]!;
+          const answer = message.answer;
+          if (answer?.kind !== "pi") {
+            return { ...c, updatedAt: Date.now(), messages: c.messages.map((m) => m.id === assistantId ? { ...m, answer: { kind: "error", message: detail.includes("尚未配置") ? detail : `Pi 问答失败：${detail}` } as ChatAnswer } : m) };
+          }
+          const messages = [...c.messages];
+          const partialText = answer.text + leftover.text;
+          const partialThinking = (answer.thinking ?? "") + leftover.thinking;
+          if (!partialText.trim() && !partialThinking.trim()) {
+            messages[index] = {
+              ...message,
+              text: "",
+              answer: { kind: "error", message: `Pi 问答失败：${detail}` } as ChatAnswer,
+            };
+          } else {
+            messages[index] = {
+              ...message,
+              text: partialText,
+              answer: { ...answer, text: partialText, thinking: partialThinking, streaming: false, phase: "complete", errorMessage: detail },
+            } as ChatMessage;
+          }
+          return { ...c, messages, updatedAt: Date.now() };
+        }));
+      } finally {
+        if (piSessionId) streamTargets.current.delete(piSessionId);
+        activePiSessionRef.current = null;
+        setSending(false);
+      }
+      return;
+    }
     try {
       const hits = await invoke<SearchHit[]>("document_search", { root: workspace.root, query: text });
-      patchAnswer(convId, assistantId, { kind: "results", hits });
+      if (hits.length === 0 && inTauriRuntime() && !modelConfigured) {
+        patchAnswer(convId, assistantId, {
+          kind: "error",
+          message: "当前处于关键词检索模式（未配置 AI 模型），且没有匹配的文档。请在 设置 → AI 模型 (Pi) 配置模型后使用生成式问答；或先在设置中索引工作区、换用短关键词。",
+        });
+      } else {
+        const note = !modelConfigured
+          ? "关键词检索模式：未配置 AI 模型，回答为纯检索结果。可在 设置 → AI 模型 (Pi) 中配置后启用生成式问答。"
+          : undefined;
+        patchAnswer(convId, assistantId, { kind: "results", hits, note });
+      }
     } catch (reason: unknown) {
       const message = inTauriRuntime()
         ? String(reason)
@@ -824,8 +1103,10 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
           ? (conversations.length === 0
             ? <div className="chat-welcome">
               <div className="hero-icon">✦</div>
-              <h2>搜索当前工作空间</h2>
-              <p>输入关键词检索已索引文档。Pi 生成式问答接入后将在此提供基于真实文档的回答。</p>
+              <h2>{modelReady ? "向 Pi 提问" : "搜索当前工作空间"}</h2>
+              <p>{modelReady
+                ? "回答基于工作区已索引文档，由 Pi 流式生成，并标注引用来源。"
+                : "当前为关键词检索模式。配置 AI 模型（设置 → AI 模型）后，可在此使用基于真实文档的 Pi 生成式问答。"}</p>
             </div>
             : <div className="reader-placeholder"><div className="reader-placeholder-icon">✦</div><h3>选择左侧对话</h3><p>或直接在下方提问，自动开始一段新对话。</p></div>)
           : <div className="chat-thread-inner">
@@ -839,7 +1120,13 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
         <div className="composer-inner">
           <textarea
             ref={textareaRef}
-            placeholder={workspace ? "搜索工作空间文档…" : "请先选择一个工作区"}
+            placeholder={
+              !workspace
+                ? "请先选择一个工作区"
+                : modelReady
+                  ? "向 Pi 提问，回答基于工作区已索引文档…"
+                  : "未配置 AI 模型：将以关键词检索文档（可在设置中配置模型）"
+            }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
@@ -852,27 +1139,51 @@ function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: Work
           />
           <div className="composer-toolbar">
             <span className="composer-tool">{workspace ? workspace.title : "未选择工作区"}</span>
-            <button className="send-button" aria-label="发送" disabled={!workspace || !query.trim() || sending} onClick={() => void send()}>
-              {sending ? "…" : "↑"}
-            </button>
+            {sending && activePiSessionRef.current
+              ? <button className="send-button stop" aria-label="停止生成" onClick={() => {
+                  const sessionId = activePiSessionRef.current;
+                  if (sessionId && workspace) void invoke("pi_session_cancel", { root: workspace.root, sessionId }).catch(() => undefined);
+                }}>■</button>
+              : <button className="send-button" aria-label="发送" disabled={!workspace || !query.trim() || sending} onClick={() => void send()}>
+                  {sending ? "…" : "↑"}
+                </button>}
           </div>
         </div>
-        <p className="composer-note">Enter 提问 · Shift+Enter 换行 · 全文检索 (FTS5)</p>
+        <p className="composer-note">
+          {modelReady ? "Pi 生成式问答 · Enter 发送" : "关键词检索模式 (FTS5) · 未配置 AI 模型"} · Enter 提问 · Shift+Enter 换行
+        </p>
       </div>
     </section>
   </div>;
 }
 
-function AssistantMessage({ message, onOpenDocument }: { message: ChatMessage; onOpenDocument: (fileId: number) => void }): React.ReactElement {
+// Memoized: streaming updates rebuild only the message being appended;
+// untouched messages keep their object identity, so historical messages
+// (and their parsed Markdown) don't re-render on every flush.
+const AssistantMessage = memo(function AssistantMessage({ message, onOpenDocument }: { message: ChatMessage; onOpenDocument: (fileId: number) => void }): React.ReactElement {
   const answer = message.answer ?? { kind: "pending" as const };
   return <div className="msg-assistant">
     <div className="msg-avatar">✦</div>
     <div className="msg-assistant-body">
       {answer.kind === "pending" && <p className="msg-status">正在检索工作空间文档…</p>}
-      {answer.kind === "error" && <div className="msg-error">检索失败：{answer.message}</div>}
+      {answer.kind === "pi" && <>
+        {Boolean(answer.thinking) && (
+          <details className="msg-thinking" open={answer.phase === "thinking"}>
+            <summary>{answer.phase === "thinking" ? "正在思考…" : "查看思考过程"}</summary>
+            <div className="msg-thinking-body">{answer.thinking}</div>
+          </details>
+        )}
+        {answer.text && (answer.streaming
+          ? <div className="msg-pi-streaming">{answer.text}</div>
+          : <div className="msg-pi-body"><ReactMarkdown>{answer.text}</ReactMarkdown></div>)}
+        {!answer.text && !answer.thinking && <p className="msg-status">{answer.streaming ? "Pi 正在思考…" : "Pi 未返回文本输出。"}</p>}
+        {answer.errorMessage && <div className="msg-error">回答未完整生成：{answer.errorMessage}</div>}
+      </>}
+      {answer.kind === "error" && <div className="msg-error">{answer.message}</div>}
       {answer.kind === "results" && (answer.hits.length === 0
         ? <p className="msg-status">没有找到匹配的文档。尝试换一个关键词，或先索引工作区。</p>
         : <>
+          {answer.note && <p className="msg-note">{answer.note}</p>}
           <p className="msg-status">找到 {answer.hits.length} 条相关文档：</p>
           <div className="hit-list">
             {answer.hits.map((hit) => (
@@ -889,7 +1200,7 @@ function AssistantMessage({ message, onOpenDocument }: { message: ChatMessage; o
         </>)}
     </div>
   </div>;
-}
+});
 
 // --- Documents page: helpers + sub-components (layout mirrors preview.html) -
 
@@ -1607,39 +1918,5 @@ function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; 
       </button>
     </div>
     {!workspace && <p className="muted" style={{ padding: "0 1em" }}>请先选择一个工作区。</p>}
-  </div>;
-}
-
-function SettingsView({ workspace, kbStats }: { workspace: WorkspaceInfo | null; kbStats: KbStats | null }): React.ReactElement {
-  const indexed = kbStats?.tablesOk ?? false;
-  const fileCount = kbStats?.files ?? 0;
-  const chunkCount = kbStats?.chunks ?? 0;
-  const vectorAvailable = kbStats?.vectorEnabled ?? false;
-
-  return <div className="settings-grid">
-    <div className="setting-card">
-      <span className="eyebrow">工作区</span>
-      <h2>{workspace?.title ?? "未选择"}</h2>
-      <p>{workspace?.root ?? "选择一个本地工作区开始使用。"}</p>
-    </div>
-    <div className="setting-card">
-      <span className="eyebrow">索引状态</span>
-      <h2>{indexed ? `${fileCount} 文档` : "未索引"}</h2>
-      <p>
-        {indexed
-          ? `${chunkCount} chunks · ${kbStats?.ftsRecords ?? 0} FTS 记录`
-          : "前往「后台任务」点击「重新索引」构建索引。"}
-      </p>
-    </div>
-    <div className="setting-card">
-      <span className="eyebrow">存储引擎</span>
-      <h2>Rust Core</h2>
-      <p>SQLite WAL · FTS5 全文检索{vectorAvailable ? " · 向量检索已启用" : " · FTS-only（向量未启用）"}</p>
-    </div>
-    <div className="setting-card">
-      <span className="eyebrow">写入安全</span>
-      <h2>受控写入</h2>
-      <p>草稿确认机制 · expectedHash 校验 · 原子写入 · 自动备份</p>
-    </div>
   </div>;
 }

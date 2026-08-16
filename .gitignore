@@ -152,3 +152,6 @@ vite.config.ts.timestamp-*
 /target/
 **/target/
 .zcode/
+
+# Staged pi-runtime bundle (built by scripts/prepare-pi-runtime.mjs)
+apps/desktop/src-tauri/pi-runtime/

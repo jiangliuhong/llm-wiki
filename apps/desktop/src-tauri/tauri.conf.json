@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.llmwiki.desktop",
   "build": {
-    "beforeDevCommand": "pnpm --filter @llm-wiki/desktop dev",
+    "beforeDevCommand": "node ../../scripts/prepare-pi-runtime.mjs && pnpm --filter @llm-wiki/desktop dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm --filter @llm-wiki/desktop build",
+    "beforeBuildCommand": "node ../../scripts/prepare-pi-runtime.mjs && pnpm --filter @llm-wiki/desktop build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,6 +26,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "pi-runtime/index.js": "pi-runtime/index.js"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

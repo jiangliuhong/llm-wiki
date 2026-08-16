@@ -1,9 +1,10 @@
 mod extractor;
+mod pi;
 
 use llm_wiki_core::indexer::{index_files, IndexRunOptions, KbConfig};
 use llm_wiki_core::store::{ListFilesOptions, SqliteStore};
 use llm_wiki_core::WorkspaceManifest;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -223,15 +224,97 @@ fn document_search(
     store.search(&query, limit).map_err(|e| e.to_string())
 }
 
+/// Per-workspace KB config, persisted at `<root>/.llm-wiki/config.json`.
+/// Only the fields the desktop UI manages are stored; everything else falls
+/// back to `KbConfig::default()` when indexing.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct KbConfigFile {
+    #[serde(default)]
+    include: Option<Vec<String>>,
+    #[serde(default)]
+    model: Option<pi::ModelConfig>,
+}
+
+fn kb_config_path(root: &str) -> PathBuf {
+    PathBuf::from(root).join(".llm-wiki").join("config.json")
+}
+
+fn read_kb_config(root: &str) -> KbConfigFile {
+    match fs::read_to_string(kb_config_path(root)) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => KbConfigFile::default(),
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KbConfigInfo {
+    include: Vec<String>,
+    defaults: Vec<String>,
+}
+
+/// Returns the workspace's configured index directories, falling back to the
+/// built-in defaults (`wiki/`) when no config file exists.
+#[tauri::command]
+fn kb_config_get(root: String) -> Result<KbConfigInfo, String> {
+    let defaults = KbConfig::default().include;
+    let stored = read_kb_config(&root).include.filter(|v| !v.is_empty());
+    Ok(KbConfigInfo {
+        include: stored.unwrap_or_else(|| defaults.clone()),
+        defaults,
+    })
+}
+
+/// Persists the workspace's index directories. Each entry must be a non-empty,
+/// workspace-relative directory path; duplicates are dropped.
+#[tauri::command]
+fn kb_config_set_include(root: String, include: Vec<String>) -> Result<KbConfigInfo, String> {
+    let mut cleaned: Vec<String> = Vec::new();
+    for entry in include {
+        let trimmed = entry.trim().trim_start_matches('/').trim_end_matches('/').to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.contains("..") || trimmed.contains('\\') {
+            return Err(format!("invalid index directory: '{trimmed}' (must be workspace-relative)"));
+        }
+        if !cleaned.iter().any(|v| v == &trimmed) {
+            cleaned.push(trimmed);
+        }
+    }
+    if cleaned.is_empty() {
+        return Err("至少需要一个索引目录".into());
+    }
+    let path = kb_config_path(&root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("failed to create .llm-wiki directory: {e}"))?;
+    }
+    // Read-modify-write so sibling keys (e.g. the Pi model config) survive.
+    let mut value: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    value["include"] = serde_json::to_value(&cleaned).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| format!("failed to write config: {e}"))?;
+    Ok(KbConfigInfo { include: cleaned, defaults: KbConfig::default().include })
+}
+
 /// Triggers an incremental index pass on the workspace using the Rust indexer.
 /// This is the desktop's native alternative to running `llm-wiki index` in a
-/// terminal. Phase A: FTS-only (no vector embeddings).
+/// terminal. Phase A: FTS-only (no vector embeddings). Index directories come
+/// from `<root>/.llm-wiki/config.json` when present, otherwise the defaults.
 #[tauri::command]
 fn index_run(root: String, reset: Option<bool>) -> Result<llm_wiki_core::indexer::IndexStats, String> {
+    let mut config = KbConfig::default();
+    if let Some(include) = read_kb_config(&root).include.filter(|v| !v.is_empty()) {
+        config.include = include;
+    }
     let options = IndexRunOptions {
         project_root: PathBuf::from(&root),
         db_path: None,
-        config: KbConfig::default(),
+        config,
         reset: reset.unwrap_or(false),
         source_revision: None,
         source_branch: None,
@@ -392,9 +475,136 @@ fn attachment_extract(root: String, name: String) -> Result<String, String> {
     extractor::extract_text(&path)
 }
 
+// --- Pi sidecar commands ----------------------------------------------------
+
+/// Returns the workspace's configured Pi model, if any.
+#[tauri::command]
+fn pi_config_get(root: String) -> Result<Option<pi::ModelConfig>, String> {
+    Ok(pi::read_model_config(&root))
+}
+
+/// Persists the Pi model configuration (provider / model id / optional API
+/// key) into `<root>/.llm-wiki/config.json`.
+#[tauri::command]
+fn pi_config_set(root: String, model: pi::ModelConfig) -> Result<pi::ModelConfig, String> {
+    pi::write_model_config(&root, &model)?;
+    Ok(model)
+}
+
+/// Starts a new Pi chat session for the workspace. The final response's
+/// `output` carries the session summary (sessionId, title, model).
+///
+/// Async + `spawn_blocking`: `pi::request` blocks on a channel for the
+/// sidecar's reply; running that on the command thread would freeze the
+/// main thread (macOS beach ball) for the whole wait.
+#[tauri::command]
+async fn pi_session_new(root: String, title: Option<String>) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let model = pi::read_model_config(&root)
+            .filter(|m| !m.provider.is_empty() && !m.id.is_empty())
+            .ok_or("尚未配置 AI 模型，请先在设置页填写模型 Provider / ID / API Key")?;
+        // Serialize the whole config so apiKey/baseUrl/thinkingLevel ride along
+        // (skip_serializing_if keeps unset fields out of the payload).
+        let model_value = serde_json::to_value(&model).map_err(|e| e.to_string())?;
+        let mut body = serde_json::json!({
+            "type": "session_new",
+            "workspaceId": root,
+            "workspaceRoot": root,
+            "model": model_value,
+        });
+        if let Some(title) = title {
+            body["title"] = serde_json::json!(title);
+        }
+        let response = pi::request(&root, body, std::time::Duration::from_secs(30))?;
+        if response.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+            Ok(response)
+        } else {
+            Err(response
+                .pointer("/error/message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("创建 Pi 会话失败")
+                .to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Sends a prompt to an existing session. Streaming events (text deltas, tool
+/// calls) arrive on the `pi-event` Tauri event; the returned value is the
+/// final completion ack. The workspace model config rides along so a lazily
+/// restored session gets fresh credentials.
+#[tauri::command]
+async fn pi_prompt(root: String, session_id: String, text: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut body = serde_json::json!({ "type": "prompt", "sessionId": session_id, "text": text });
+        if let Some(model) = pi::read_model_config(&root) {
+            if let Some(model_value) = serde_json::to_value(&model).ok() {
+                body["model"] = model_value;
+            }
+        }
+        let response = pi::request(&root, body, std::time::Duration::from_secs(300));
+        check_ok(response, "Pi 问答失败")
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Deletes a Pi session in the workspace's sidecar.
+#[tauri::command]
+async fn pi_session_delete(root: String, session_id: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let response = pi::request(
+            &root,
+            serde_json::json!({ "type": "session_delete", "sessionId": session_id }),
+            std::time::Duration::from_secs(30),
+        );
+        check_ok(response, "删除 Pi 会话失败")
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Aborts an in-flight prompt on the given session. Must not block the main
+/// thread, otherwise the "stop generating" button can't run while a prompt
+/// is stuck.
+#[tauri::command]
+async fn pi_session_cancel(root: String, session_id: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let response = pi::request(
+            &root,
+            serde_json::json!({ "type": "session_cancel", "sessionId": session_id }),
+            std::time::Duration::from_secs(30),
+        );
+        check_ok(response, "取消 Pi 会话失败")
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Turns a `ok:false` sidecar response into an Err carrying the sidecar's
+/// error message, so the frontend surfaces the actual failure reason.
+fn check_ok(response: Result<serde_json::Value, String>, fallback: &str) -> Result<serde_json::Value, String> {
+    let response = response?;
+    if response.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        Ok(response)
+    } else {
+        Err(response
+            .pointer("/error/message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(fallback)
+            .to_string())
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            pi::set_app(app.handle().clone());
+            pi::kill_stale_dev_sidecars();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             workspace_current,
             workspace_open,
@@ -405,6 +615,8 @@ pub fn run() {
             document_read,
             relations_list,
             kb_stats,
+            kb_config_get,
+            kb_config_set_include,
             document_search,
             index_run,
             draft_list,
@@ -416,7 +628,18 @@ pub fn run() {
             attachments_list,
             attachment_read,
             attachment_extract,
+            pi_config_get,
+            pi_config_set,
+            pi_session_new,
+            pi_prompt,
+            pi_session_delete,
+            pi_session_cancel,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running LLM Wiki Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building LLM Wiki Desktop")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                pi::shutdown_all();
+            }
+        });
 }
