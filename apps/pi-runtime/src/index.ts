@@ -4,170 +4,195 @@ import { createInterface } from "node:readline";
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { stdin, stdout, stderr } from "node:process";
+import { HostToolBridge } from "./bridge.js";
 import {
-  eventResponse,
-  isAllowedReadOnlyTool,
+  createResponse,
+  type HostToRuntimeMessage,
   PROTOCOL_VERSION,
-  response,
-  type RuntimeRequest,
-  type RuntimeResponse,
+  type ReadyMessage,
+  type RuntimeToHostMessage,
 } from "./protocol.js";
-import { createDefaultHostTools, type HostToolRegistry } from "./host.js";
-import { SessionHost, SessionHostError } from "./agent.js";
+import { SessionRegistry } from "./registry.js";
+import { SessionHostError } from "./wrapper.js";
 
-export class JsonlHostBridge {
-  private readonly sessionHost: SessionHost;
-  private pendingEvents: RuntimeResponse[] = [];
+export class AgentRuntimeServer {
+  private readonly bridge: HostToolBridge;
+  private readonly registry: SessionRegistry;
 
   constructor(
-    private readonly tools: HostToolRegistry = createDefaultHostTools(),
-    private readonly workspaceRoot = process.cwd(),
-    /** When set, streaming events are written here as they happen. */
-    private readonly onEvent: ((response: RuntimeResponse) => void) | undefined = undefined,
+    private readonly sendToHost: (message: RuntimeToHostMessage) => void = (msg) => {
+      stdout.write(`${JSON.stringify(msg)}\n`);
+    },
   ) {
-    this.sessionHost = new SessionHost(
-      tools,
-      (sessionId, event) => {
-        const message = eventResponse("stream", sessionId, event);
-        this.pendingEvents.push(message);
-        this.onEvent?.(message);
-      },
-      this.workspaceRoot,
-    );
+    this.bridge = new HostToolBridge((toolReq) => {
+      this.sendToHost(toolReq);
+    });
+
+    this.registry = new SessionRegistry(this.bridge, (envelope) => {
+      this.sendToHost(envelope);
+    });
   }
 
-  async handleLine(line: string): Promise<RuntimeResponse[]> {
-    let request: RuntimeRequest;
-    try {
-      request = JSON.parse(line) as RuntimeRequest;
-    } catch (error) {
-      return [
-        response("unknown", "error", {
-          ok: false,
-          error: { code: "PROTOCOL_INVALID_JSON", message: String(error) },
-        }),
-      ];
-    }
-    if (request.protocolVersion !== PROTOCOL_VERSION || typeof request.id !== "string") {
-      return [
-        response(request.id ?? "unknown", "error", {
-          ok: false,
-          error: { code: "PROTOCOL_VERSION_UNSUPPORTED", message: "Expected protocolVersion 1." },
-        }),
-      ];
-    }
-    if (request.type === "ping") return [response(request.id, "pong")];
-    if (request.type === "tool_call") return [await this.handleToolCall(request)];
-    return await this.handleSessionRequest(request);
+  getRegistry(): SessionRegistry {
+    return this.registry;
   }
 
-  private async handleToolCall(request: Extract<RuntimeRequest, { type: "tool_call" }>): Promise<RuntimeResponse> {
-    if (!isAllowedReadOnlyTool(request.tool)) {
-      return response(request.id, "tool_result", {
-        ok: false,
-        error: { code: "PI_TOOL_NOT_ALLOWED", message: `Tool ${request.tool} is not exposed to Pi.` },
-      });
-    }
-    const handler = this.tools[request.tool];
-    if (!handler) {
-      return response(request.id, "tool_result", {
-        ok: false,
-        error: { code: "CORE_TOOL_NOT_CONFIGURED", message: `Core tool ${request.tool} is not configured.` },
-      });
-    }
-    try {
-      const output = await handler(request.input, {
-        workspaceId: request.workspaceId,
-        workspaceRoot: this.workspaceRoot,
-      });
-      return response(request.id, "tool_result", { ok: true, output });
-    } catch (error) {
-      return response(request.id, "tool_result", {
-        ok: false,
-        error: { code: "PI_TOOL_FAILED", message: error instanceof Error ? error.message : String(error) },
-      });
-    }
+  getBridge(): HostToolBridge {
+    return this.bridge;
   }
 
-  private async handleSessionRequest(request: Exclude<RuntimeRequest, { type: "ping" | "tool_call" }>): Promise<RuntimeResponse[]> {
-    this.pendingEvents = [];
+  async handleLine(line: string): Promise<RuntimeToHostMessage | null> {
+    let msg: HostToRuntimeMessage;
     try {
-      switch (request.type) {
-        case "session_new":
-          return [response(request.id, "tool_result", { ok: true, output: await this.sessionHost.newSession(request) })];
-        case "session_list":
-          return [response(request.id, "tool_result", { ok: true, output: this.sessionHost.list() })];
-        case "session_switch":
-          return [response(request.id, "tool_result", { ok: true, output: await this.sessionHost.switch(request.sessionId) })];
-        case "session_fork":
-          return [response(request.id, "tool_result", { ok: true, output: await this.sessionHost.fork(request.sessionId, request.title) })];
-        case "session_delete":
-          await this.sessionHost.delete(request.sessionId);
-          return [response(request.id, "tool_result", { ok: true, output: { deleted: request.sessionId } })];
-        case "session_cancel":
-          await this.sessionHost.cancel(request.sessionId);
-          return [response(request.id, "tool_result", { ok: true, output: { cancelled: request.sessionId } })];
-        case "session_compact":
-          await this.sessionHost.compact(request.sessionId);
-          return [response(request.id, "tool_result", { ok: true, output: { compacted: request.sessionId } })];
-        case "prompt": {
-          const { text: answerText } = await this.sessionHost.prompt(
-            request.sessionId,
-            request.text,
-            request.id,
-            request.model,
-          );
-          const events = this.pendingEvents.map((event) => ({ ...event, id: request.id }));
-          const completion = response(request.id, "tool_result", {
-            ok: true,
-            output: { completed: true, text: answerText },
-          });
-          return this.onEvent ? [completion] : [...events, completion];
+      msg = JSON.parse(line) as HostToRuntimeMessage;
+    } catch (err) {
+      return createResponse("unknown", false, undefined, {
+        code: "PI_PROTOCOL_ERROR",
+        message: `Invalid JSON payload: ${String(err)}`,
+      });
+    }
+
+    if (msg.protocolVersion !== PROTOCOL_VERSION) {
+      return createResponse(
+        (msg as { id?: string }).id ?? "unknown",
+        false,
+        undefined,
+        {
+          code: "PI_PROTOCOL_ERROR",
+          message: `Expected protocolVersion "${PROTOCOL_VERSION}", received "${(msg as { protocolVersion?: string }).protocolVersion}".`,
+        },
+      );
+    }
+
+    if (msg.type === "tool_result") {
+      this.bridge.handleToolResult(msg);
+      return null;
+    }
+
+    if (msg.type === "ping") {
+      return { protocolVersion: PROTOCOL_VERSION, id: msg.id, type: "pong", ok: true };
+    }
+
+    try {
+      switch (msg.type) {
+        case "models_list": {
+          const models = await this.registry.listAvailableModels();
+          return createResponse(msg.id, true, models);
         }
-        default:
-          return [
-            response((request as { id: string }).id, "error", {
-              ok: false,
-              error: { code: "PROTOCOL_UNKNOWN_REQUEST", message: `Unknown request type ${(request as { type: string }).type}.` },
-            }),
-          ];
+
+        case "session_new": {
+          const summary = await this.registry.newSession(msg);
+          return createResponse(msg.id, true, summary);
+        }
+
+        case "session_list": {
+          const list = await this.registry.list(msg.workspaceId, msg.workspaceRoot);
+          return createResponse(msg.id, true, list);
+        }
+
+        case "session_get": {
+          const snapshot = await this.registry.getSnapshot(msg.sessionId, msg.workspaceRoot);
+          return createResponse(msg.id, true, snapshot);
+        }
+
+        case "session_prompt": {
+          const wrapper = await this.registry.getSession(msg.sessionId, msg.workspaceRoot, msg.model);
+          const outcome = await wrapper.sendPrompt(msg.text, msg.runId);
+          return createResponse(msg.id, true, outcome);
+        }
+
+        case "session_cancel": {
+          await this.registry.cancel(msg.sessionId);
+          return createResponse(msg.id, true, { cancelled: true });
+        }
+
+        case "session_compact": {
+          await this.registry.compact(msg.sessionId, msg.workspaceRoot);
+          return createResponse(msg.id, true, { compacted: true });
+        }
+
+        case "session_fork": {
+          const summary = await this.registry.fork(msg.sessionId, msg.title);
+          return createResponse(msg.id, true, summary);
+        }
+
+        case "session_delete": {
+          await this.registry.delete(msg.sessionId, msg.workspaceRoot);
+          return createResponse(msg.id, true, { deleted: true });
+        }
+
+        case "runtime_shutdown": {
+          this.registry.shutdownAll();
+          return createResponse(msg.id, true, { shutdown: true });
+        }
+
+        default: {
+          return createResponse(
+            (msg as { id?: string }).id ?? "unknown",
+            false,
+            undefined,
+            {
+              code: "PI_PROTOCOL_ERROR",
+              message: `Unknown request type: ${(msg as { type?: string }).type}`,
+            },
+          );
+        }
       }
-    } catch (error) {
-      const code = error instanceof SessionHostError ? error.code : "PI_SESSION_FAILED";
-      return [
-        response(request.id, "tool_result", {
-          ok: false,
-          error: { code, message: error instanceof Error ? error.message : String(error) },
-        }),
-      ];
+    } catch (err) {
+      if (err instanceof SessionHostError) {
+        return createResponse(
+          msg.id,
+          false,
+          undefined,
+          err.toAgentError(
+            (msg as { sessionId?: string }).sessionId,
+            (msg as { runId?: string }).runId,
+          ),
+        );
+      }
+      return createResponse(msg.id, false, undefined, {
+        code: "PI_SESSION_FAILED",
+        message: err instanceof Error ? err.message : String(err),
+        sessionId: (msg as { sessionId?: string }).sessionId,
+        runId: (msg as { runId?: string }).runId,
+      });
     }
   }
-}
 
-export async function runStdio(bridge = new JsonlHostBridge(undefined, process.cwd(), (r) => {
-  stdout.write(`${JSON.stringify(r)}\n`);
-})): Promise<void> {
-  const input = createInterface({ input: stdin, crlfDelay: Infinity });
-  // Requests are handled concurrently so that session_cancel can abort an
-  // in-flight prompt instead of queueing behind it. Responses are id-routed,
-  // so out-of-order completion is safe.
-  for await (const line of input) {
-    if (!line.trim()) continue;
-    void bridge.handleLine(line).then((results) => {
-      for (const result of results) stdout.write(`${JSON.stringify(result)}\n`);
-    }, (error) => {
-      stderr.write(`handleLine failed: ${String(error)}\n`);
+  startStdio(): void {
+    const readyMsg: ReadyMessage = {
+      protocolVersion: PROTOCOL_VERSION,
+      type: "ready",
+    };
+    this.sendToHost(readyMsg);
+
+    const rl = createInterface({ input: stdin, crlfDelay: Infinity });
+
+    rl.on("line", (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      void this.handleLine(trimmed).then((response) => {
+        if (response) {
+          this.sendToHost(response);
+        }
+      }).catch((err) => {
+        stderr.write(`[AgentRuntimeServer] unhandled error in handleLine: ${String(err)}\n`);
+      });
+    });
+
+    rl.on("close", () => {
+      this.registry.shutdownAll();
     });
   }
 }
 
-export { SessionHost, SessionHostError, assistantOutcomeOf } from "./agent.js";
-export { buildHostCustomTools } from "./agent.js";
-export type { HostToolContext, HostToolHandler, HostToolRegistry } from "./host.js";
-export { createDefaultHostTools } from "./host.js";
+export { HostToolBridge } from "./bridge.js";
+export { AgentSessionWrapper, SessionHostError, assistantOutcomeOf } from "./wrapper.js";
+export { SessionRegistry } from "./registry.js";
+export * from "./protocol.js";
 
-// Compare via a real file URL (with symlink resolution) so paths with spaces,
-// unicode, or symlinked directories still match.
+// Check if running as main CLI script
 const entryUrl = (() => {
   try {
     return process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : "";
@@ -175,7 +200,9 @@ const entryUrl = (() => {
     return "";
   }
 })();
+
 if (import.meta.url === entryUrl) {
-  stderr.write("llm-wiki Pi Runtime JSONL bridge ready\n");
-  void runStdio();
+  stderr.write("llm-wiki Pi Agent Runtime v2 starting...\n");
+  const server = new AgentRuntimeServer();
+  server.startStdio();
 }

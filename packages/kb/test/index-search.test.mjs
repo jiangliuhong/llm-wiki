@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -398,4 +398,29 @@ test("an existing pre-graph database upgrades without rebuilding chunks", () => 
   const file = listFiles({ projectRoot }).files[0];
   assert.ok(file);
   assert.match(getFileContent(file.id, { projectRoot }).content, /Welcome/);
+});
+
+test("readers tolerate a workspace whose .llm-wiki directory does not exist", () => {
+  const projectRoot = makeProject();
+  // No indexFiles() call: `<root>/.llm-wiki/` has never been created.
+  const page = listFiles({ projectRoot, page: 1, pageSize: 10 });
+  assert.deepEqual(page, { page: 1, pageSize: 10, total: 0, files: [] });
+
+  const conn = openDatabase({ projectRoot, readonly: true });
+  try {
+    assert.equal(conn.vectorEnabled, false);
+  } finally {
+    closeConnection(conn);
+  }
+});
+
+test("a read-write open creates the missing .llm-wiki directory and db file", () => {
+  const projectRoot = makeProject();
+  const conn = openDatabase({ projectRoot, loadVector: false });
+  try {
+    assert.equal(conn.dbPath, path.join(projectRoot, ".llm-wiki", "index.db"));
+  } finally {
+    closeConnection(conn);
+  }
+  assert.ok(existsSync(path.join(projectRoot, ".llm-wiki", "index.db")));
 });

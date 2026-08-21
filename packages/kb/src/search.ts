@@ -1,6 +1,7 @@
 import type { Database as DatabaseType } from "better-sqlite3";
 import { withReadonlyDb, type OpenOptions } from "./db/connection.js";
 import { generateEmbedding, float32ToBytes } from "./embedding.js";
+import { TABLE_NAMES } from "./db/schema.js";
 import type { SearchHit, SearchResult, SearchSource } from "./types.js";
 import { getGraphSearchContext } from "./graph.js";
 
@@ -36,6 +37,14 @@ export interface SearchRunOptions extends OpenOptions {
 export const DEFAULT_SEARCH_LIMIT = 8;
 /** Hard cap shared by CLI/API callers to keep local queries bounded. */
 export const MAX_SEARCH_LIMIT = 50;
+
+/** True if a table exists in the DB schema (readers' missing-DB tolerance). */
+function tableExists(db: DatabaseType, name: string): boolean {
+  const row = db
+    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type IN ('table','view') AND name = ?")
+    .get(name) as { ok?: number } | undefined;
+  return row?.ok === 1;
+}
 
 interface VectorRow {
   chunkId: number;
@@ -86,15 +95,19 @@ export function searchKnowledgeBase(query: string, options: SearchRunOptions): S
         }
       }
 
-      // FTS leg (with graceful degradation for malformed queries).
+      // FTS leg (with graceful degradation for malformed queries). Skipped on
+      // an index-less DB (e.g. never-built workspace → empty in-memory
+      // fallback) so no "no such table" warning leaks to the user.
       let ftsRows: FtsRow[] = [];
-      try {
-        ftsRows = runFtsSearch(conn.db, normalizedQuery, limit);
-      } catch (err) {
-        const ftsWarning =
-          `Full-text query failed (${(err as Error).message}).` +
-          ` Try splitting special characters like "&" or rephrasing.`;
-        warning = warning ? `${warning} ${ftsWarning}` : ftsWarning;
+      if (tableExists(conn.db, TABLE_NAMES.fts)) {
+        try {
+          ftsRows = runFtsSearch(conn.db, normalizedQuery, limit);
+        } catch (err) {
+          const ftsWarning =
+            `Full-text query failed (${(err as Error).message}).` +
+            ` Try splitting special characters like "&" or rephrasing.`;
+          warning = warning ? `${warning} ${ftsWarning}` : ftsWarning;
+        }
       }
 
       const hits = mergeHits(vectorRows, ftsRows, limit);

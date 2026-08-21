@@ -71,9 +71,10 @@ test("init adds missing skills without overwriting existing skills or config", (
 test("search before index is handled without an unhandled stack trace", () => {
   const cwd = makeProject();
   const result = run(cwd, ["search", "anything"]);
-  // DB errors now exit with code 3 (EXIT_DB) under the stable error protocol.
-  assert.equal(result.status, 3);
-  assert.match(result.stderr, /unable to open database file/);
+  // A never-built index reads as empty (connection-level fallback), matching
+  // the --read-only behavior below instead of a DB error.
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /No results for "anything"/);
   assert.doesNotMatch(result.stderr, /at openDatabase/);
 });
 

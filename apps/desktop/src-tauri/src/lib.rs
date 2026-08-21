@@ -484,79 +484,172 @@ fn pi_config_get(root: String) -> Result<Option<pi::ModelConfig>, String> {
 }
 
 /// Persists the Pi model configuration (provider / model id / optional API
-/// key) into `<root>/.llm-wiki/config.json`.
+/// key) into `<root>/.llm-wiki/config.json` with API key stored in Keychain.
 #[tauri::command]
 fn pi_config_set(root: String, model: pi::ModelConfig) -> Result<pi::ModelConfig, String> {
     pi::write_model_config(&root, &model)?;
     Ok(model)
 }
 
-/// Starts a new Pi chat session for the workspace. The final response's
-/// `output` carries the session summary (sessionId, title, model).
-///
-/// Async + `spawn_blocking`: `pi::request` blocks on a channel for the
-/// sidecar's reply; running that on the command thread would freeze the
-/// main thread (macOS beach ball) for the whole wait.
+/// Lists available and authenticated models from Pi runtime.
 #[tauri::command]
-async fn pi_session_new(root: String, title: Option<String>) -> Result<serde_json::Value, String> {
+async fn pi_models_list() -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let model = pi::read_model_config(&root)
-            .filter(|m| !m.provider.is_empty() && !m.id.is_empty())
-            .ok_or("尚未配置 AI 模型，请先在设置页填写模型 Provider / ID / API Key")?;
-        // Serialize the whole config so apiKey/baseUrl/thinkingLevel ride along
-        // (skip_serializing_if keeps unset fields out of the payload).
-        let model_value = serde_json::to_value(&model).map_err(|e| e.to_string())?;
+        let response = pi::supervisor().request(
+            serde_json::json!({
+                "type": "models_list",
+            }),
+            std::time::Duration::from_secs(15),
+        );
+        check_ok(response, "获取 Pi 可用模型列表失败")
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Starts a new Pi chat session for the workspace.
+/// Starts a new Pi chat session for the workspace.
+/// If workspace has no explicit model override, passes empty model so Pi Runtime
+/// automatically inherits Pi CLI's global credentials and default model.
+#[tauri::command]
+async fn pi_session_new(
+    root: String,
+    title: Option<String>,
+    model: Option<pi::ModelConfig>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let effective_model = model.or_else(|| {
+            pi::read_model_config(&root)
+                .filter(|m| !m.provider.is_empty() && !m.id.is_empty())
+        });
+        let model_value = match effective_model {
+            Some(ref m) => serde_json::to_value(m).map_err(|e| e.to_string())?,
+            None => serde_json::json!({ "provider": "", "id": "" }),
+        };
         let mut body = serde_json::json!({
             "type": "session_new",
             "workspaceId": root,
             "workspaceRoot": root,
             "model": model_value,
         });
-        if let Some(title) = title {
-            body["title"] = serde_json::json!(title);
+        if let Some(ref t) = title {
+            body["title"] = serde_json::json!(t);
         }
-        let response = pi::request(&root, body, std::time::Duration::from_secs(30))?;
+        let response = pi::supervisor().request(body, std::time::Duration::from_secs(30))?;
         if response.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+            if let Some(summary) = response.get("output") {
+                if let Some(sid) = summary.get("sessionId").and_then(serde_json::Value::as_str) {
+                    let store = SqliteStore::from_root(&root);
+                    let now = now_iso();
+                    let title_str = summary.get("title").and_then(serde_json::Value::as_str).unwrap_or(title.as_deref().unwrap_or("新对话"));
+                    let model_provider = summary.pointer("/model/provider").and_then(serde_json::Value::as_str).unwrap_or("pi-global");
+                    let model_id = summary.pointer("/model/id").and_then(serde_json::Value::as_str).unwrap_or("default");
+                    let _ = store.upsert_chat_session(&llm_wiki_core::store::ChatSessionRecord {
+                        id: sid.to_string(),
+                        workspace_id: root.clone(),
+                        title: title_str.to_string(),
+                        model_provider: model_provider.to_string(),
+                        model_id: model_id.to_string(),
+                        created_at: now.clone(),
+                        updated_at: now,
+                        archived: false,
+                        pinned: false,
+                    });
+                }
+            }
             Ok(response)
         } else {
-            Err(response
-                .pointer("/error/message")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("创建 Pi 会话失败")
-                .to_string())
+            Err(extract_error_message(&response, "创建 Pi 会话失败"))
         }
     })
     .await
     .map_err(|e| format!("Pi 后台任务异常：{e}"))?
 }
 
-/// Sends a prompt to an existing session. Streaming events (text deltas, tool
-/// calls) arrive on the `pi-event` Tauri event; the returned value is the
-/// final completion ack. The workspace model config rides along so a lazily
-/// restored session gets fresh credentials.
+/// Lists chat sessions for the given workspace from SQLite metadata.
 #[tauri::command]
-async fn pi_prompt(root: String, session_id: String, text: String) -> Result<serde_json::Value, String> {
+fn pi_session_list(root: String) -> Result<Vec<llm_wiki_core::store::ChatSessionRecord>, String> {
+    let store = SqliteStore::from_root(&root);
+    store.list_chat_sessions(Some(&root)).map_err(|e| e.to_string())
+}
+
+/// Gets a Pi session snapshot (including message history) from the agent runtime.
+#[tauri::command]
+async fn pi_session_get(root: String, session_id: String) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut body = serde_json::json!({ "type": "prompt", "sessionId": session_id, "text": text });
-        if let Some(model) = pi::read_model_config(&root) {
-            if let Some(model_value) = serde_json::to_value(&model).ok() {
+        let body = serde_json::json!({
+            "type": "session_get",
+            "sessionId": session_id,
+            "workspaceRoot": root,
+        });
+        let response = pi::supervisor().request(body, std::time::Duration::from_secs(30));
+        check_ok(response, "获取 Pi 会话快照失败")
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Sends a prompt to an existing session.
+#[tauri::command]
+async fn pi_prompt(
+    root: String,
+    session_id: String,
+    text: String,
+    model: Option<pi::ModelConfig>,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut body = serde_json::json!({
+            "type": "session_prompt",
+            "sessionId": session_id,
+            "workspaceRoot": root,
+            "text": text,
+        });
+        if let Some(ref m) = model {
+            if let Ok(val) = serde_json::to_value(m) {
+                body["model"] = val;
+            }
+        } else if let Some(workspace_model) = pi::read_model_config(&root) {
+            if let Some(model_value) = serde_json::to_value(&workspace_model).ok() {
                 body["model"] = model_value;
             }
         }
-        let response = pi::request(&root, body, std::time::Duration::from_secs(300));
-        check_ok(response, "Pi 问答失败")
+        let response = pi::supervisor().request(body, std::time::Duration::from_secs(300));
+        let outcome = check_ok(response, "Pi 问答失败")?;
+
+        // Update session's updated_at in SQLite
+        let store = SqliteStore::from_root(&root);
+        if let Ok(Some(mut session)) = store.get_chat_session(&session_id) {
+            session.updated_at = now_iso();
+            if let Some(ref m) = model {
+                if !m.provider.is_empty() {
+                    session.model_provider = m.provider.clone();
+                }
+                if !m.id.is_empty() {
+                    session.model_id = m.id.clone();
+                }
+            }
+            let _ = store.upsert_chat_session(&session);
+        }
+
+        Ok(outcome)
     })
     .await
     .map_err(|e| format!("Pi 后台任务异常：{e}"))?
 }
 
-/// Deletes a Pi session in the workspace's sidecar.
+/// Deletes a Pi session in SQLite metadata and runtime JSONL storage.
 #[tauri::command]
 async fn pi_session_delete(root: String, session_id: String) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let response = pi::request(
-            &root,
-            serde_json::json!({ "type": "session_delete", "sessionId": session_id }),
+        let store = SqliteStore::from_root(&root);
+        let _ = store.delete_chat_session(&session_id);
+
+        let response = pi::supervisor().request(
+            serde_json::json!({
+                "type": "session_delete",
+                "sessionId": session_id,
+                "workspaceRoot": root,
+            }),
             std::time::Duration::from_secs(30),
         );
         check_ok(response, "删除 Pi 会话失败")
@@ -565,14 +658,11 @@ async fn pi_session_delete(root: String, session_id: String) -> Result<serde_jso
     .map_err(|e| format!("Pi 后台任务异常：{e}"))?
 }
 
-/// Aborts an in-flight prompt on the given session. Must not block the main
-/// thread, otherwise the "stop generating" button can't run while a prompt
-/// is stuck.
+/// Aborts an in-flight prompt on the given session.
 #[tauri::command]
-async fn pi_session_cancel(root: String, session_id: String) -> Result<serde_json::Value, String> {
+async fn pi_session_cancel(session_id: String) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let response = pi::request(
-            &root,
+        let response = pi::supervisor().request(
             serde_json::json!({ "type": "session_cancel", "sessionId": session_id }),
             std::time::Duration::from_secs(30),
         );
@@ -582,19 +672,135 @@ async fn pi_session_cancel(root: String, session_id: String) -> Result<serde_jso
     .map_err(|e| format!("Pi 后台任务异常：{e}"))?
 }
 
-/// Turns a `ok:false` sidecar response into an Err carrying the sidecar's
-/// error message, so the frontend surfaces the actual failure reason.
+/// Compacts a Pi session.
+#[tauri::command]
+async fn pi_session_compact(root: String, session_id: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let response = pi::supervisor().request(
+            serde_json::json!({
+                "type": "session_compact",
+                "sessionId": session_id,
+                "workspaceRoot": root,
+            }),
+            std::time::Duration::from_secs(60),
+        );
+        check_ok(response, "压缩 Pi 会话失败")
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Forks an existing Pi session.
+#[tauri::command]
+async fn pi_session_fork(root: String, session_id: String, title: Option<String>) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut body = serde_json::json!({
+            "type": "session_fork",
+            "sessionId": session_id,
+            "workspaceRoot": root,
+        });
+        if let Some(ref t) = title {
+            body["title"] = serde_json::json!(t);
+        }
+        let response = pi::supervisor().request(body, std::time::Duration::from_secs(30))?;
+        if response.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+            if let Some(summary) = response.get("output") {
+                if let Some(forked_id) = summary.get("sessionId").and_then(serde_json::Value::as_str) {
+                    let store = SqliteStore::from_root(&root);
+                    let now = now_iso();
+                    let title_str = summary.get("title").and_then(serde_json::Value::as_str).unwrap_or(title.as_deref().unwrap_or("分叉会话"));
+                    let model_provider = summary.pointer("/model/provider").and_then(serde_json::Value::as_str).unwrap_or("anthropic");
+                    let model_id = summary.pointer("/model/id").and_then(serde_json::Value::as_str).unwrap_or("claude-sonnet-4-5");
+                    let _ = store.upsert_chat_session(&llm_wiki_core::store::ChatSessionRecord {
+                        id: forked_id.to_string(),
+                        workspace_id: root.clone(),
+                        title: title_str.to_string(),
+                        model_provider: model_provider.to_string(),
+                        model_id: model_id.to_string(),
+                        created_at: now.clone(),
+                        updated_at: now,
+                        archived: false,
+                        pinned: false,
+                    });
+                }
+            }
+            Ok(response)
+        } else {
+            Err(extract_error_message(&response, "分叉 Pi 会话失败"))
+        }
+    })
+    .await
+    .map_err(|e| format!("Pi 后台任务异常：{e}"))?
+}
+
+/// Updates session metadata in SQLite.
+#[tauri::command]
+fn pi_session_update_meta(
+    root: String,
+    session_id: String,
+    title: Option<String>,
+    pinned: Option<bool>,
+    archived: Option<bool>,
+) -> Result<llm_wiki_core::store::ChatSessionRecord, String> {
+    let store = SqliteStore::from_root(&root);
+    let mut session = store
+        .get_chat_session(&session_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Session {session_id} not found"))?;
+
+    if let Some(t) = title {
+        session.title = t;
+    }
+    if let Some(p) = pinned {
+        session.pinned = p;
+    }
+    if let Some(a) = archived {
+        session.archived = a;
+    }
+    session.updated_at = now_iso();
+
+    store.upsert_chat_session(&session).map_err(|e| e.to_string())?;
+    Ok(session)
+}
+
+fn extract_error_message(response: &serde_json::Value, fallback: &str) -> String {
+    response
+        .pointer("/error/message")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(fallback)
+        .to_string()
+}
+
 fn check_ok(response: Result<serde_json::Value, String>, fallback: &str) -> Result<serde_json::Value, String> {
     let response = response?;
     if response.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         Ok(response)
     } else {
-        Err(response
-            .pointer("/error/message")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(fallback)
-            .to_string())
+        Err(extract_error_message(&response, fallback))
     }
+}
+
+fn now_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let secs = now.as_secs();
+    let millis = now.subsec_millis();
+    let days = secs / 86400;
+    let remainder = secs % 86400;
+    let hour = remainder / 3600;
+    let minute = (remainder % 3600) / 60;
+    let second = remainder % 60;
+    let d = days as i64 + 719468;
+    let era = if d >= 0 { d } else { d - 146096 } / 146097;
+    let doe = (d - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", year, month, day, hour, minute, second, millis)
 }
 
 pub fn run() {
@@ -630,16 +836,22 @@ pub fn run() {
             attachment_extract,
             pi_config_get,
             pi_config_set,
+            pi_models_list,
             pi_session_new,
+            pi_session_list,
+            pi_session_get,
             pi_prompt,
             pi_session_delete,
             pi_session_cancel,
+            pi_session_compact,
+            pi_session_fork,
+            pi_session_update_meta,
         ])
         .build(tauri::generate_context!())
         .expect("error while building LLM Wiki Desktop")
         .run(|_app, event| {
             if let tauri::RunEvent::Exit = event {
-                pi::shutdown_all();
+                pi::supervisor().shutdown();
             }
         });
 }

@@ -1,6 +1,7 @@
+import nodeFs from "node:fs";
+import nodePath from "node:path";
 import Database from "better-sqlite3";
 import type { Database as DatabaseType } from "better-sqlite3";
-import nodePath from "node:path";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -65,6 +66,13 @@ export function resolveDbPath(projectRoot: string, dbPath?: string): string {
 /**
  * Opens the knowledge-base database.
  *
+ * Read-write opens ensure the DB's parent directory exists first (SQLite then
+ * creates the file itself), so indexing into a fresh workspace works without a
+ * prior `ensureKbDir`. Read-only opens cannot create anything; when the index
+ * has never been built (missing file or directory), they fall back to a
+ * throwaway in-memory DB so the read layer returns its well-formed "empty"
+ * results instead of throwing.
+ *
  * @throws If the SQLite file cannot be opened (e.g. corrupt, locked). Does NOT
  *   throw on vector-extension failure — that is reported via `vectorEnabled`
  *   and the optional `warn` callback.
@@ -73,8 +81,15 @@ export function openDatabase(options: OpenOptions = {}): KbConnection {
   const projectRoot = options.projectRoot ?? process.cwd();
   const dbPath = resolveDbPath(projectRoot, options.dbPath);
 
-  const db = new Database(dbPath, {
-    readonly: options.readonly ?? false,
+  const missingIndex = options.readonly && !nodeFs.existsSync(dbPath);
+  if (!options.readonly) {
+    nodeFs.mkdirSync(nodePath.dirname(dbPath), { recursive: true });
+  }
+
+  const db = new Database(missingIndex ? ":memory:" : dbPath, {
+    // better-sqlite3 rejects readonly in-memory DBs; the throwaway fallback is
+    // only ever handed to the read layer, so it is effectively read-only.
+    readonly: !missingIndex && (options.readonly ?? false),
     // better-sqlite3 default WAL gives concurrent reads; we keep defaults.
   });
 
@@ -84,7 +99,7 @@ export function openDatabase(options: OpenOptions = {}): KbConnection {
   db.pragma("foreign_keys = ON");
 
   let vectorEnabled = false;
-  if (options.loadVector ?? true) {
+  if (!missingIndex && (options.loadVector ?? true)) {
     vectorEnabled = tryLoadVecExtension(db, options.warn);
   }
 
@@ -151,6 +166,8 @@ export function closeConnection(conn: KbConnection): void {
 /**
  * Runs a callback against a fresh read-only connection and closes it
  * afterwards. Mirrors the reference system's `withDb` (open → query → close).
+ * Tolerates a not-yet-built index: the callback sees an empty in-memory DB
+ * (see {@link openDatabase}) and should return its empty-shaped result.
  */
 export function withReadonlyDb<T>(
   options: Omit<OpenOptions, "readonly">,

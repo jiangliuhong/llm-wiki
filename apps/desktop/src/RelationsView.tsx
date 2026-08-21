@@ -67,6 +67,7 @@ export interface RelationsViewProps {
   workspace: { root: string; title: string } | null;
   onAskAI: () => void;
   onOpenDocuments: () => void;
+  onIndexed?: () => void;
 }
 
 // --- Graph model ------------------------------------------------------------
@@ -492,9 +493,11 @@ type RangeMode = "global" | "one" | "two";
 
 const RANGE_LABELS: Record<RangeMode, string> = { global: "全局", one: "一跳", two: "两跳" };
 
-export default function RelationsView({ workspace, onAskAI, onOpenDocuments }: RelationsViewProps): React.ReactElement {
+export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onIndexed }: RelationsViewProps): React.ReactElement {
   const [state, setState] = useState<LoadState<RelationsPayload>>({ status: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
+  const [indexing, setIndexing] = useState(false);
+  const [indexError, setIndexError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [rangeMode, setRangeMode] = useState<RangeMode>("global");
@@ -598,49 +601,67 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments }: R
   const showToast = useCallback((text: string): void => {
     setToast(text);
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 1600);
+    toastTimer.current = window.setTimeout(() => setToast(null), 1800);
   }, []);
+
+  const selectNode = useCallback((id: string | null, center = false): void => {
+    setSelectedId(id);
+    if (id && center && model) {
+      const node = model.nodes.find((n) => n.id === id);
+      if (node && stageRef.current) {
+        const sw = stageRef.current.clientWidth;
+        const sh = stageRef.current.clientHeight;
+        const curScale = camera.scale;
+        setCamera({
+          x: sw / 2 - (node.x + node.w / 2) * curScale,
+          y: sh / 2 - (node.y + node.h / 2) * curScale,
+          scale: curScale,
+        });
+      }
+    }
+  }, [camera.scale, model]);
 
   const fit = useCallback((): void => {
-    const el = stageRef.current;
-    if (!el || !model) return;
-    const pad = 46;
-    const availW = Math.max(120, el.clientWidth - pad * 2);
-    const availH = Math.max(120, el.clientHeight - pad * 2);
-    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(availW / model.world.w, availH / model.world.h, 1.05)));
-    setCamera({
-      scale,
-      x: (el.clientWidth - model.world.w * scale) / 2,
-      y: (el.clientHeight - model.world.h * scale) / 2,
-    });
+    if (!stageRef.current || !model) return;
+    const sw = stageRef.current.clientWidth;
+    const sh = stageRef.current.clientHeight;
+    if (sw === 0 || sh === 0 || model.world.w === 0 || model.world.h === 0) return;
+    const pad = 48;
+    const scaleX = (sw - pad * 2) / model.world.w;
+    const scaleY = (sh - pad * 2) / model.world.h;
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(scaleX, scaleY) * 0.95));
+    const x = (sw - model.world.w * scale) / 2;
+    const y = (sh - model.world.h * scale) / 2;
+    setCamera({ x, y, scale });
   }, [model]);
 
-  const zoomAt = useCallback((cx: number, cy: number, factor: number): void => {
+  const zoomAt = useCallback((clientX: number, clientY: number, factor: number): void => {
     setCamera((prev) => {
-      const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev.scale * factor));
-      const ratio = scale / prev.scale;
-      return { scale, x: cx - (cx - prev.x) * ratio, y: cy - (cy - prev.y) * ratio };
+      const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, prev.scale * factor));
+      if (nextScale === prev.scale) return prev;
+      const ratio = nextScale / prev.scale;
+      return {
+        x: clientX - (clientX - prev.x) * ratio,
+        y: clientY - (clientY - prev.y) * ratio,
+        scale: nextScale,
+      };
     });
   }, []);
 
-  const centerNode = useCallback((id: string): void => {
-    const el = stageRef.current;
-    const node = model?.nodes.find((n) => n.id === id);
-    if (!el || !node) return;
-    setCamera((prev) => {
-      const scale = Math.max(prev.scale, 0.85);
-      return {
-        scale,
-        x: el.clientWidth / 2 - (node.x + node.w / 2) * scale,
-        y: el.clientHeight / 2 - (node.y + node.h / 2) * scale,
-      };
-    });
-  }, [model]);
-
-  const selectNode = useCallback((id: string, center = false): void => {
-    setSelectedId(id);
-    if (center) centerNode(id);
-  }, [centerNode]);
+  const handleEmptyReindex = async (): Promise<void> => {
+    if (!workspace || !inTauriRuntime() || indexing) return;
+    setIndexing(true);
+    setIndexError(null);
+    try {
+      await invoke("index_run", { root: workspace.root });
+      onIndexed?.();
+      setReloadKey((k) => k + 1);
+    } catch (e: unknown) {
+      setIndexError(String(e));
+    } finally {
+      setIndexing(false);
+    }
+  };
 
   // Refit when the graph, range mode or cluster filter changes.
   useEffect(() => { fit(); }, [fit, rangeMode, activeCluster]);
@@ -669,14 +690,91 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments }: R
     return () => observer.disconnect();
   }, [fit]);
 
-  if (state.status === "loading") return <div className="empty-state"><div className="empty-icon">⌘</div><h2>加载关系图谱…</h2></div>;
-  if (state.status === "error") return <div className="empty-state"><div className="empty-icon">⌘</div><h2>无法加载关系图谱</h2><p>{state.message}</p></div>;
+  if (state.status === "loading") {
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon">
+            <GIcon name="refresh" size={28} />
+          </div>
+          <h2>加载关系图谱…</h2>
+          <p className="doc-empty-desc">正在读取图谱节点与关联拓扑结构，请稍候</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+            <GIcon name="x" size={28} />
+          </div>
+          <h2>无法加载关系图谱</h2>
+          <p className="doc-empty-desc">{state.message}</p>
+          <button className="primary-button" onClick={() => setReloadKey((k) => k + 1)}>
+            <GIcon name="refresh" size={14} />
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!model || (model.nodes.length === 0 && proposals.length === 0)) {
-    return <div className="empty-state">
-      <div className="empty-icon">⌘</div>
-      <h2>暂无关系数据</h2>
-      <p>工作区尚未索引，或还没有已发布 / 待审核的关系。</p>
-    </div>;
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card" style={{ maxWidth: 660 }}>
+          <div className="doc-empty-icon">
+            <GIcon name="spark" size={28} />
+          </div>
+          <h2>暂无图谱关联数据</h2>
+          <p className="doc-empty-desc">
+            知识图谱支持两类关系发现机制，重新扫描工作区即可提取确定性关系并即刻呈现拓扑图。
+          </p>
+
+          <div className="doc-quick-dirs-section" style={{ marginBottom: 20 }}>
+            <div style={{ display: "grid", gap: "10px", fontSize: "12.5px", color: "var(--text-secondary)" }}>
+              <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
+                <span style={{ flex: "0 0 18px", color: "var(--accent)" }}>1.</span>
+                <div>
+                  <strong style={{ color: "var(--text-main)" }}>确定性文档关系</strong>：识别 Markdown 内链 (<code>[标题](doc.md)</code>)、双链 (<code>[[文档]]</code>) 或 Frontmatter <code>relations:</code> 声明。
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
+                <span style={{ flex: "0 0 18px", color: "var(--accent)" }}>2.</span>
+                <div>
+                  <strong style={{ color: "var(--text-main)" }}>AI 语义推理关系</strong>：由 Agent 深度推理发现跨文档逻辑依赖或衍生引用，审核通过后即刻入图。
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="doc-empty-actions">
+            <button
+              type="button"
+              className="primary-button"
+              disabled={indexing || !workspace}
+              onClick={() => void handleEmptyReindex()}
+            >
+              <GIcon name="refresh" size={14} />
+              <span className={indexing ? "spin" : ""}>{indexing ? "正在重新索引中…" : "立即重新索引并构建图谱"}</span>
+            </button>
+            <button type="button" className="tool-button" onClick={onOpenDocuments}>
+              <GIcon name="file" size={14} />
+              <span>查看文档库</span>
+            </button>
+            <button type="button" className="tool-button" onClick={onAskAI}>
+              <GIcon name="spark" size={14} />
+              <span>AI 分析关系</span>
+            </button>
+          </div>
+
+          {indexError && <div className="doc-status-banner error" style={{ marginTop: 14 }}>索引失败：{indexError}</div>}
+        </div>
+      </div>
+    );
   }
 
   const q = query.trim().toLowerCase();

@@ -1183,6 +1183,21 @@ const BASE_SCHEMA_SQL: &str = r#"
     );
 
     CREATE INDEX IF NOT EXISTS idx_write_ops_draft ON write_operations(draft_id);
+
+    -- Chat session metadata: maps workspaceId to sessionId with title, model, timestamps
+    CREATE TABLE IF NOT EXISTS chat_sessions (
+      id              TEXT PRIMARY KEY,
+      workspace_id    TEXT NOT NULL,
+      title           TEXT NOT NULL,
+      model_provider  TEXT NOT NULL,
+      model_id        TEXT NOT NULL,
+      created_at      TEXT NOT NULL,
+      updated_at      TEXT NOT NULL,
+      archived        INTEGER NOT NULL DEFAULT 0,
+      pinned          INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id, updated_at DESC);
 "#;
 
 #[cfg(test)]

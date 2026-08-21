@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = "1" as const;
+export const PROTOCOL_VERSION = "2" as const;
 
 export type ReadOnlyTool =
   | "workspace_get"
@@ -10,30 +10,127 @@ export type ReadOnlyTool =
   | "document_relations"
   | "document_neighborhood";
 
-export interface ToolCallRequest {
-  protocolVersion: typeof PROTOCOL_VERSION;
-  id: string;
-  type: "tool_call";
-  sessionId: string;
-  workspaceId: string;
-  tool: string;
-  input: Record<string, unknown>;
+export const ALLOWED_READ_ONLY_TOOLS: readonly ReadOnlyTool[] = [
+  "workspace_get",
+  "workspace_status",
+  "document_list",
+  "document_search",
+  "document_read",
+  "document_read_range",
+  "document_relations",
+  "document_neighborhood",
+] as const;
+
+export function isAllowedReadOnlyTool(tool: string): tool is ReadOnlyTool {
+  return (ALLOWED_READ_ONLY_TOOLS as readonly string[]).includes(tool);
 }
 
-export interface PingRequest {
-  protocolVersion: typeof PROTOCOL_VERSION;
-  id: string;
-  type: "ping";
+export type AgentErrorCode =
+  | "PI_RUNTIME_NOT_FOUND"
+  | "PI_RUNTIME_START_FAILED"
+  | "PI_RUNTIME_EXITED"
+  | "PI_MODEL_NOT_CONFIGURED"
+  | "PI_AUTH_REQUIRED"
+  | "PI_SESSION_NOT_FOUND"
+  | "PI_SESSION_BUSY"
+  | "PI_SESSION_FAILED"
+  | "PI_SESSION_CANCELLED"
+  | "PI_EMPTY_RESPONSE"
+  | "PI_TOOL_NOT_ALLOWED"
+  | "PI_TOOL_FAILED"
+  | "PI_PROTOCOL_ERROR";
+
+export interface AgentError {
+  code: AgentErrorCode | string;
+  message: string;
+  retryable?: boolean;
+  sessionId?: string;
+  runId?: string;
 }
 
 export interface ModelConfig {
   provider: string;
   id: string;
   apiKey?: string;
-  /** Optional Anthropic/OpenAI-compatible endpoint override (e.g. Zhipu GLM Coding Plan). */
   baseUrl?: string;
-  /** Reasoning effort for the session; unknown values fall back to "medium". */
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
+  credentialId?: string;
+}
+
+export interface RuntimeScope {
+  workspaceId: string;
+  workspaceRoot: string;
+  sessionId?: string;
+  runId?: string;
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  model: ModelConfig;
+  messageCount: number;
+  active?: boolean;
+}
+
+export interface ToolCallRecord {
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  result?: unknown;
+  isError?: boolean;
+}
+
+export interface MessageRecord {
+  id: string;
+  role: "user" | "assistant" | "system";
+  text: string;
+  thinking?: string;
+  toolCalls?: ToolCallRecord[];
+  createdAt: number;
+  stopReason?: string;
+  errorMessage?: string;
+}
+
+export interface SessionSnapshot {
+  sessionId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  model: ModelConfig;
+  messages: MessageRecord[];
+}
+
+export type AgentEvent =
+  | { type: "session_created"; session: SessionSummary }
+  | { type: "session_restored"; session: SessionSummary }
+  | { type: "agent_start"; runId?: string }
+  | { type: "thinking_delta"; delta: string }
+  | { type: "text_delta"; delta: string }
+  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
+  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+  | { type: "agent_end"; text?: string; stopReason?: string }
+  | { type: "agent_error"; code: string; message: string; retryable: boolean }
+  | { type: "session_deleted"; sessionId: string };
+
+export interface AgentEventEnvelope {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  sessionId: string;
+  workspaceId: string;
+  runId?: string;
+  event: AgentEvent;
+}
+
+// Host -> Runtime requests
+export interface PingRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "ping";
 }
 
 export interface SessionNewRequest {
@@ -51,13 +148,45 @@ export interface SessionListRequest {
   protocolVersion: typeof PROTOCOL_VERSION;
   id: string;
   type: "session_list";
+  workspaceId?: string;
+  workspaceRoot?: string;
 }
 
-export interface SessionSwitchRequest {
+export interface SessionGetRequest {
   protocolVersion: typeof PROTOCOL_VERSION;
   id: string;
-  type: "session_switch";
+  type: "session_get";
   sessionId: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
+}
+
+export interface SessionPromptRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "session_prompt";
+  sessionId: string;
+  text: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
+  model?: ModelConfig;
+  runId?: string;
+}
+
+export interface SessionCancelRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "session_cancel";
+  sessionId: string;
+}
+
+export interface SessionCompactRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "session_compact";
+  sessionId: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
 }
 
 export interface SessionForkRequest {
@@ -73,98 +202,132 @@ export interface SessionDeleteRequest {
   id: string;
   type: "session_delete";
   sessionId: string;
+  workspaceId?: string;
+  workspaceRoot?: string;
 }
 
-export interface SessionCancelRequest {
+export interface RuntimeShutdownRequest {
   protocolVersion: typeof PROTOCOL_VERSION;
   id: string;
-  type: "session_cancel";
-  sessionId: string;
+  type: "runtime_shutdown";
 }
 
-export interface SessionCompactRequest {
+export interface ToolResultResponse {
   protocolVersion: typeof PROTOCOL_VERSION;
   id: string;
-  type: "session_compact";
-  sessionId: string;
-}
-
-export interface PromptRequest {
-  protocolVersion: typeof PROTOCOL_VERSION;
-  id: string;
-  type: "prompt";
-  sessionId: string;
-  text: string;
-  /** Current model config; used to re-credential a lazily restored session. */
-  model?: ModelConfig;
-}
-
-export type SessionRequest =
-  | SessionNewRequest
-  | SessionListRequest
-  | SessionSwitchRequest
-  | SessionForkRequest
-  | SessionDeleteRequest
-  | SessionCancelRequest
-  | SessionCompactRequest
-  | PromptRequest;
-
-export type RuntimeRequest = ToolCallRequest | PingRequest | SessionRequest;
-
-export interface SessionSummary {
-  sessionId: string;
-  title: string;
-  createdAt: string;
-  model: ModelConfig;
-  messageCount: number;
-  active: boolean;
-}
-
-export type StreamEventPayload =
-  | { type: "text_delta"; delta: string }
-  | { type: "thinking_delta"; delta: string }
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
-  | { type: "agent_end" }
-  | { type: "session_switched"; sessionId: string }
-  | { type: "error"; message: string };
-
-export interface RuntimeResponse {
-  protocolVersion: typeof PROTOCOL_VERSION;
-  id: string;
-  type: "tool_result" | "pong" | "error" | "event";
+  type: "tool_result";
+  toolCallId: string;
   ok: boolean;
-  sessionId?: string;
-  event?: StreamEventPayload;
   output?: unknown;
   error?: { code: string; message: string };
 }
 
-export function response(
-  id: string,
-  type: RuntimeResponse["type"],
-  value: Omit<RuntimeResponse, "protocolVersion" | "id" | "type"> = { ok: true },
-): RuntimeResponse {
-  return { protocolVersion: PROTOCOL_VERSION, id, type, ...value };
+export interface AvailableModelItem {
+  provider: string;
+  providerName?: string;
+  id: string;
+  name: string;
+  reasoning?: boolean;
+  isDefault?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
 }
 
-export function eventResponse(
+export interface ModelsListRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "models_list";
+}
+
+export type HostToRuntimeMessage =
+  | PingRequest
+  | ModelsListRequest
+  | SessionNewRequest
+  | SessionListRequest
+  | SessionGetRequest
+  | SessionPromptRequest
+  | SessionCancelRequest
+  | SessionCompactRequest
+  | SessionForkRequest
+  | SessionDeleteRequest
+  | RuntimeShutdownRequest
+  | ToolResultResponse;
+
+// Runtime -> Host messages
+export interface ReadyMessage {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  type: "ready";
+}
+
+export interface PongResponse {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "pong";
+  ok: true;
+}
+
+export interface ToolRequest {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "tool_request";
+  sessionId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  toolCallId: string;
+  tool: string;
+  input: Record<string, unknown>;
+}
+
+export interface RuntimeResponse {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  id: string;
+  type: "response";
+  ok: boolean;
+  output?: unknown;
+  error?: AgentError;
+}
+
+export interface RuntimeErrorNotification {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  type: "runtime_error";
+  error: AgentError;
+}
+
+export type RuntimeToHostMessage =
+  | ReadyMessage
+  | PongResponse
+  | ToolRequest
+  | RuntimeResponse
+  | AgentEventEnvelope
+  | RuntimeErrorNotification;
+
+export function createResponse(
   id: string,
+  ok: boolean,
+  output?: unknown,
+  error?: AgentError,
+): RuntimeResponse {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    id,
+    type: "response",
+    ok,
+    ...(output !== undefined ? { output } : {}),
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
+export function createEventEnvelope(
   sessionId: string,
-  event: StreamEventPayload,
-): RuntimeResponse {
-  return { protocolVersion: PROTOCOL_VERSION, id, type: "event", ok: true, sessionId, event };
-}
-
-export function isAllowedReadOnlyTool(tool: string): tool is ReadOnlyTool {
-  return [
-    "workspace_get",
-    "workspace_status",
-    "document_list",
-    "document_search",
-    "document_read",
-    "document_read_range",
-    "document_relations",
-    "document_neighborhood",
-  ].includes(tool);
+  workspaceId: string,
+  event: AgentEvent,
+  runId?: string,
+): AgentEventEnvelope {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    sessionId,
+    workspaceId,
+    ...(runId ? { runId } : {}),
+    event,
+  };
 }

@@ -1,11 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import RelationsView, { inTauriRuntime } from "./RelationsView";
 import SettingsView from "./SettingsView";
+import { useAgentChat } from "./useAgentChat";
+import type { AvailableModelItem, ChatMessageItem, SessionInfo } from "./agentClient";
 
 type View = "chat" | "documents" | "relations" | "imports" | "drafts" | "tasks" | "settings";
 
@@ -89,15 +90,19 @@ interface AttachmentInfo {
   isExtractable: boolean;
 }
 
-interface SearchHit {
-  chunkId: number;
-  fileId: number;
-  path: string;
-  startLine: number;
-  endLine: number;
-  content: string;
-  preview: string;
-  bm25: number;
+interface IndexStats {
+  scanned: number;
+  added: number;
+  updated: number;
+  skipped: number;
+  deleted: number;
+  chunks: number;
+  vectorEnabled: boolean;
+}
+
+interface KbConfigInfo {
+  include: string[];
+  defaults: string[];
 }
 
 type LoadState<T> =
@@ -123,8 +128,6 @@ function readStoredWorkspaces(): WorkspaceInfo[] {
     return value.filter((item): item is WorkspaceInfo => {
       if (!item || typeof item !== "object") return false;
       const candidate = item as Record<string, unknown>;
-      // Drop fallback contexts (resolvedBy === "default"): they have no
-      // real on-disk workspace and shouldn't appear in the recent list.
       return typeof candidate.id === "string"
         && typeof candidate.title === "string"
         && typeof candidate.root === "string"
@@ -139,18 +142,54 @@ function saveStoredWorkspaces(workspaces: WorkspaceInfo[]): void {
   try {
     localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(workspaces.slice(0, 8)));
   } catch {
-    // localStorage is optional in embedded previews.
+    // localStorage is optional
   }
 }
 
+// --- Unified SVG Icon System ---
+const ICON_PATHS: Record<string, React.ReactNode> = {
+  spark: (<><path d="M12 2.8c.4 4.8 2.4 6.8 7.2 7.2-4.8.4-6.8 2.4-7.2 7.2-.4-4.8-2.4-6.8-7.2-7.2 4.8-.4 6.8-2.4 7.2-7.2Z" /><path d="M19 15.6c.2 2.1 1.1 3 3.2 3.2-2.1.2-3 1.1-3.2 3.2-.2-2.1-1.1-3-3.2-3.2 2.1-.2 3-1.1 3.2-3.2Z" fill="currentColor" stroke="none" /></>),
+  file: (<><path d="M6 3.5h8.5L19 8v12.5H6v-17Z" /><path d="M14.5 3.5V8H19M9 12h7M9 15h7M9 18h4" /></>),
+  network: (<><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></>),
+  import: (<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></>),
+  draft: (<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></>),
+  tasks: (<><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>),
+  settings: (<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></>),
+  search: (<><circle cx="10.5" cy="10.5" r="6.2" /><path d="m15.2 15.2 4.3 4.3" /></>),
+  plus: <path d="M12 5v14M5 12h14" />,
+  trash: (<><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7" /><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" /></>),
+  refresh: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4" />,
+  close: <path d="m6 6 12 12M18 6 6 18" />,
+  check: <path d="m6.5 12.5 3.4 3.4 7.6-8" />,
+  chevron: <path d="m7 9.5 5 5 5-5" />,
+  folder: (<><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7Z" /><path d="M3.5 11.5h17" /></>),
+  copy: (<><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>),
+  database: (<><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>),
+  terminal: (<><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></>),
+  shield: (<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></>),
+  link: <path d="m9.5 14.5 5-5M7.8 17.5l-1.3 1.3a3.7 3.7 0 1 1-5.3-5.3l3-3a3.7 3.7 0 0 1 5.3 0M16.2 6.5l1.3-1.3a3.7 3.7 0 1 1 5.3 5.3l-3 3a3.7 3.7 0 0 1-5.3 0" />,
+  arrowUp: (<><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>),
+  arrowRight: (<><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></>),
+  stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
+  pin: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
+};
+
+function Icon({ name, size = 16, strokeWidth = 1.7, className }: { name: string; size?: number; strokeWidth?: number; className?: string }): React.ReactElement {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {ICON_PATHS[name] ?? null}
+    </svg>
+  );
+}
+
 const navigation: Array<{ id: View; label: string; icon: string }> = [
-  { id: "chat", label: "AI 问答", icon: "✦" },
-  { id: "documents", label: "文档", icon: "▤" },
-  { id: "relations", label: "关系图谱", icon: "⌘" },
-  { id: "imports", label: "文件导入", icon: "↥" },
-  { id: "drafts", label: "写入草稿", icon: "◒" },
-  { id: "tasks", label: "后台任务", icon: "◷" },
-  { id: "settings", label: "设置", icon: "⚙" },
+  { id: "chat", label: "AI 问答", icon: "spark" },
+  { id: "documents", label: "文档", icon: "file" },
+  { id: "relations", label: "关系图谱", icon: "network" },
+  { id: "imports", label: "文件导入", icon: "import" },
+  { id: "drafts", label: "写入草稿", icon: "draft" },
+  { id: "tasks", label: "后台任务", icon: "tasks" },
+  { id: "settings", label: "设置", icon: "settings" },
 ];
 
 export default function App(): React.ReactElement {
@@ -177,9 +216,6 @@ export default function App(): React.ReactElement {
       setWorkspace(previewWorkspace);
       return;
     }
-    // Prefer the most recently used workspace over the cwd-derived one:
-    // model configs (API keys) live in <root>/.llm-wiki/config.json, so
-    // silently switching roots on launch made saved settings "disappear".
     const restoreRecentWorkspace = (): Promise<WorkspaceInfo | null> => {
       const recent = stored[0];
       if (!recent) return Promise.resolve(null);
@@ -191,10 +227,6 @@ export default function App(): React.ReactElement {
       .then((restored) => (restored ? Promise.resolve(restored) : invoke<WorkspaceInfo>("workspace_current")))
       .then((current) => {
         setWorkspace(current);
-        // Only remember workspaces that resolved to a real manifest. A
-        // "default" fallback (no on-disk workspace.json) is shown as the
-        // active context but must not enter the recent list — it has no
-        // deletable on-disk presence.
         if (current.resolvedBy !== "default") {
           setKnownWorkspaces((previous) => {
             const next = [current, ...previous.filter((item) => item.id !== current.id)];
@@ -213,8 +245,6 @@ export default function App(): React.ReactElement {
       });
   }, []);
 
-  // Refresh index stats whenever the active workspace changes (or after a
-  // manual index run) so the status bar reflects the real counts.
   useEffect(() => {
     if (!workspace || !inTauriRuntime() || typeof invoke !== "function") {
       setKbStats(null);
@@ -227,7 +257,6 @@ export default function App(): React.ReactElement {
     return () => { cancelled = true; };
   }, [workspace, statsRefreshKey]);
 
-  // ⌘K / Ctrl+K → switch to the search view and focus the input.
   const focusSearch = (): void => {
     setView("chat");
     setSearchFocusTrigger((n) => n + 1);
@@ -370,15 +399,14 @@ export default function App(): React.ReactElement {
             <div className="workspace-selector">
               <button className="workspace-identity" aria-label="切换工作空间" aria-expanded={workspaceMenuOpen} onClick={() => { setWorkspaceMenuOpen((open) => !open); setWorkspaceError(null); }}>
                 <span className="workspace-avatar">{workspace?.title.slice(0, 2) ?? "LW"}</span>
-                <span>
+                <span className="workspace-info-text">
                   <strong>{workspace?.title ?? "LLM Wiki"}</strong>
                   <small>{workspace?.root ?? "本地知识工作台"}</small>
                 </span>
-                <span className="chevron">⌄</span>
+                <Icon name="chevron" size={14} className="chevron-icon" />
               </button>
             </div>
           </div>
-          <button className="compose-button" onClick={() => setView("chat")}><span>＋</span>新建对话 <kbd>⌘ N</kbd></button>
           <div className="nav-group">
             <span className="nav-label">工作台</span>
             <nav aria-label="主导航">
@@ -388,7 +416,8 @@ export default function App(): React.ReactElement {
                   key={item.id}
                   onClick={() => { setView(item.id); setPendingDocFileId(null); }}
                 >
-                  <span>{item.icon}</span>{item.label}
+                  <span className="nav-item-icon"><Icon name={item.icon} size={15} /></span>
+                  {item.label}
                 </button>
               ))}
             </nav>
@@ -432,8 +461,24 @@ export default function App(): React.ReactElement {
           <div className={view === "chat" || view === "documents" || view === "relations" || view === "settings" ? "content-pane documents-pane" : "content-pane"}>
             {error && <div className="error-banner">Core 尚未连接：{error}</div>}
             {view === "chat" && <ChatView workspace={workspace} focusTrigger={searchFocusTrigger} onOpenDocument={(fileId) => { setPendingDocFileId(fileId); setView("documents"); }} />}
-            {view === "documents" && <DocumentsView workspace={workspace} focusFileId={pendingDocFileId} onAskAI={() => setView("chat")} />}
-            {view === "relations" && <RelationsView workspace={workspace} onAskAI={() => setView("chat")} onOpenDocuments={() => setView("documents")} />}
+            {view === "documents" && (
+              <DocumentsView
+                workspace={workspace}
+                focusFileId={pendingDocFileId}
+                onAskAI={() => setView("chat")}
+                onOpenImports={() => setView("imports")}
+                onOpenSettings={() => setView("settings")}
+                onIndexed={() => setStatsRefreshKey((k) => k + 1)}
+              />
+            )}
+            {view === "relations" && (
+              <RelationsView
+                workspace={workspace}
+                onAskAI={() => setView("chat")}
+                onOpenDocuments={() => setView("documents")}
+                onIndexed={() => setStatsRefreshKey((k) => k + 1)}
+              />
+            )}
             {view === "imports" && <ImportsView workspace={workspace} onImported={() => setStatsRefreshKey((k) => k + 1)} />}
             {view === "drafts" && <DraftsView workspace={workspace} />}
             {view === "tasks" && <TasksView workspace={workspace} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
@@ -441,16 +486,33 @@ export default function App(): React.ReactElement {
           </div>
         </section>
       </div>
+
       <footer className="statusbar">
-        {kbStats && kbStats.tablesOk
-          ? <>{kbStats.files} documents · {kbStats.chunks} chunks · index ready</>
-          : <>{workspace ? "工作区尚未索引" : "未选择工作区"}</>}
-        {" "}<span>Rust Core · SQLite · FTS5</span>
+        <div className="statusbar-left">
+          <span className={kbStats?.tablesOk ? "status-dot" : "status-dot idle"} />
+          <span>{workspace?.title ?? "未选择工作区"}</span>
+          {kbStats && kbStats.tablesOk ? (
+            <span className="statusbar-pill">{kbStats.files} 篇文档 · {kbStats.chunks} 切片</span>
+          ) : (
+            <span className="statusbar-pill">{workspace ? "尚未索引" : "无连接"}</span>
+          )}
+        </div>
+        <div className="statusbar-center">
+          <span>⌘K 快速问答</span>
+        </div>
+        <div className="statusbar-right">
+          <span className="statusbar-pill">Rust Core</span>
+          <span className="statusbar-pill">SQLite FTS5</span>
+          <span className="statusbar-pill">Pi Protocol v2</span>
+        </div>
       </footer>
-      {workspaceMenuOpen && <>
-        <button className="workspace-modal-backdrop" type="button" aria-label="关闭工作区选择器" onClick={() => setWorkspaceMenuOpen(false)} />
-        <WorkspaceMenu mode={workspaceMode} setMode={setWorkspaceMode} workspace={workspace} workspaces={knownWorkspaces} onSelect={selectWorkspace} onDelete={forgetWorkspace} path={workspacePath} setPath={setWorkspacePath} title={workspaceTitle} setTitle={setWorkspaceTitle} onOpen={openWorkspace} onCreate={createWorkspace} onClose={() => setWorkspaceMenuOpen(false)} error={workspaceError} />
-      </>}
+
+      {workspaceMenuOpen && (
+        <>
+          <button className="workspace-modal-backdrop" type="button" aria-label="关闭工作区选择器" onClick={() => setWorkspaceMenuOpen(false)} />
+          <WorkspaceMenu mode={workspaceMode} setMode={setWorkspaceMode} workspace={workspace} workspaces={knownWorkspaces} onSelect={selectWorkspace} onDelete={forgetWorkspace} path={workspacePath} setPath={setWorkspacePath} title={workspaceTitle} setTitle={setWorkspaceTitle} onOpen={openWorkspace} onCreate={createWorkspace} onClose={() => setWorkspaceMenuOpen(false)} error={workspaceError} />
+        </>
+      )}
     </main>
   );
 }
@@ -491,870 +553,873 @@ function WorkspaceMenu({ mode, setMode, workspace, workspaces, onSelect, onDelet
     setPicking(true);
     try {
       const selected = await openDialog({ directory: true, multiple: false });
-      // `null`/`undefined` means the user cancelled — stay silent.
       if (typeof selected === "string") setPath(selected);
     } finally {
       setPicking(false);
     }
   };
-  return <div className="workspace-menu" role="dialog" aria-label="工作区选择器">
-    <div className="workspace-menu-header"><div><strong>工作区</strong><small>{workspace?.root ?? "选择一个本地知识库"}</small></div><button className="menu-close" onClick={onClose} aria-label="关闭工作区选择器">×</button></div>
-    <div className="workspace-tabs">
-      <button className={mode === "recent" ? "active" : ""} onClick={() => setMode("recent")}>最近使用</button>
-      <button className={mode === "open" ? "active" : ""} onClick={() => setMode("open")}>打开</button>
-      <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")}>新建</button>
-    </div>
-    {mode === "recent" && <div className="workspace-list">
-      {workspaces.length === 0 && <p className="menu-empty">还没有记录，打开一个本地工作区开始使用。</p>}
-      {workspaces.map((item) => {
-        if (pendingDelete?.id === item.id) {
-          return <div key={item.id} className="workspace-entry-confirm">
-            <div className="workspace-entry-confirm-message">
-              <strong>{item.title}</strong>
-              <span>删除后不可恢复。「移除记录」保留磁盘文件，「删除文件」清除 .llm-wiki 元数据。</span>
-            </div>
-            <div className="workspace-entry-confirm-actions">
-              <button className="confirm-remove" disabled={deleting} onClick={() => void handleDelete(item, false)}>移除记录</button>
-              <button className="confirm-purge" disabled={deleting} onClick={() => void handleDelete(item, true)}>删除文件</button>
-              <button className="confirm-cancel" disabled={deleting} onClick={() => setPendingDelete(null)}>取消</button>
-            </div>
-          </div>;
-        }
-        return <div key={item.id} className="workspace-entry-row">
-          <button className={item.id === workspace?.id ? "workspace-entry active" : "workspace-entry"} onClick={() => void onSelect(item)}>
-            <span className="workspace-entry-avatar">{item.title.slice(0, 2)}</span><span><strong>{item.title}</strong><small>{item.root}</small></span>{item.id === workspace?.id && <span className="workspace-check">✓</span>}
-          </button>
-          <button className="workspace-entry-delete" aria-label={`删除工作区 ${item.title}`} disabled={deleting} onClick={() => setPendingDelete(item)}>×</button>
-        </div>;
-      })}
-    </div>}
-    {(mode === "open" || mode === "create") && <div className="workspace-form">
-      {mode === "create" && <label>工作区名称<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：产品知识库" /></label>}
-      <label>目录路径
-        <div className="workspace-path-row">
-          <input value={path} onChange={(event) => setPath(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void (mode === "open" ? onOpen() : onCreate()); }} placeholder="/Users/you/Documents/wiki" autoFocus />
-          <button type="button" className="workspace-path-browse" disabled={picking || !inTauriRuntime()} title={inTauriRuntime() ? "选择目录" : "目录选择需要在桌面端运行"} onClick={() => void pickDirectory()}>浏览…</button>
+
+  return (
+    <div className="workspace-menu" role="dialog" aria-label="工作区选择器">
+      <div className="workspace-menu-header">
+        <div>
+          <strong>工作空间管理</strong>
+          <small>{workspace?.root ?? "选择或创建一个本地知识库工作区"}</small>
         </div>
-      </label>
-      <small className="workspace-help">{mode === "create" ? "将在目录中创建 .llm-wiki/workspace.json" : "目录需包含 .llm-wiki/workspace.json"}</small>
-      <button className="workspace-submit" onClick={() => void (mode === "open" ? onOpen() : onCreate())}>{mode === "create" ? "创建并打开" : "打开工作区"}</button>
-    </div>}
-    {error && <p className="workspace-menu-error">{error}</p>}
-  </div>;
+        <button className="menu-close" onClick={onClose} aria-label="关闭工作区选择器">
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+      <div className="workspace-tabs">
+        <button className={mode === "recent" ? "active" : ""} onClick={() => setMode("recent")}>最近使用</button>
+        <button className={mode === "open" ? "active" : ""} onClick={() => setMode("open")}>打开目录</button>
+        <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")}>新建工作区</button>
+      </div>
+      {mode === "recent" && (
+        <div className="workspace-list">
+          {workspaces.length === 0 && <p className="menu-empty" style={{ textAlign: "center", padding: "20px", color: "var(--text-muted)", fontSize: "12px" }}>还没有历史记录，打开一个本地工作区开始使用。</p>}
+          {workspaces.map((item) => {
+            if (pendingDelete?.id === item.id) {
+              return (
+                <div key={item.id} className="workspace-entry-confirm">
+                  <div className="workspace-entry-confirm-message">
+                    <strong>{item.title}</strong>
+                    <span>删除后不可恢复。「移除记录」仅清理列表，「删除文件」将清理 .llm-wiki 配置。</span>
+                  </div>
+                  <div className="workspace-entry-confirm-actions">
+                    <button className="confirm-remove" disabled={deleting} onClick={() => void handleDelete(item, false)}>移除记录</button>
+                    <button className="confirm-purge" disabled={deleting} onClick={() => void handleDelete(item, true)}>删除文件</button>
+                    <button className="confirm-cancel" disabled={deleting} onClick={() => setPendingDelete(null)}>取消</button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={item.id} className="workspace-entry-row">
+                <button className={item.id === workspace?.id ? "workspace-entry active" : "workspace-entry"} onClick={() => void onSelect(item)}>
+                  <span className="workspace-entry-avatar">{item.title.slice(0, 2)}</span>
+                  <span>
+                    <strong>{item.title}</strong>
+                    <small>{item.root}</small>
+                  </span>
+                  {item.id === workspace?.id && <span className="workspace-check"><Icon name="check" size={14} /></span>}
+                </button>
+                <button className="workspace-entry-delete" aria-label={`删除工作区 ${item.title}`} disabled={deleting} onClick={() => setPendingDelete(item)}>
+                  <Icon name="trash" size={13} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {(mode === "open" || mode === "create") && (
+        <div className="workspace-form">
+          {mode === "create" && (
+            <label>
+              工作区名称
+              <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：产品架构知识库" />
+            </label>
+          )}
+          <label>
+            目录路径
+            <div className="workspace-path-row">
+              <input value={path} onChange={(event) => setPath(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void (mode === "open" ? onOpen() : onCreate()); }} placeholder="/Users/username/Workspace/docs" autoFocus />
+              <button type="button" className="workspace-path-browse" disabled={picking || !inTauriRuntime()} title={inTauriRuntime() ? "选择目录" : "目录选择需要在桌面端运行"} onClick={() => void pickDirectory()}>
+                浏览…
+              </button>
+            </div>
+          </label>
+          <small className="workspace-help">{mode === "create" ? "将在该目录自动创建 .llm-wiki 知识库配置与索引数据库" : "目标目录需包含或初始化 .llm-wiki 知识库"}</small>
+          <button className="workspace-submit" onClick={() => void (mode === "open" ? onOpen() : onCreate())}>
+            {mode === "create" ? "创建并打开" : "打开工作区"}
+          </button>
+        </div>
+      )}
+      {error && <p className="workspace-menu-error">{error}</p>}
+    </div>
+  );
 }
 
-// --- AI chat page: helpers + sub-components (layout mirrors the documents page)
-
-let uidCounter = 0;
-function uid(): string {
-  uidCounter += 1;
-  return `${Date.now().toString(36)}-${uidCounter.toString(36)}`;
-}
-
-type ChatAnswer =
-  | { kind: "pending" }
-  | { kind: "results"; hits: SearchHit[]; note?: string }
-  | {
-      kind: "pi";
-      text: string;
-      /** Reasoning trace streamed via thinking_delta (empty for providers without it). */
-      thinking: string;
-      streaming: boolean;
-      phase: "thinking" | "answering" | "complete";
-      errorMessage?: string;
-    }
-  | { kind: "error"; message: string };
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  text: string;
-  answer?: ChatAnswer;
-  createdAt: number;
-}
-
-interface ChatConversation {
-  id: string;
-  title: string;
-  workspaceId: string;
-  /** Pi Runtime session backing this conversation (set on first Pi answer). */
-  piSessionId?: string;
-  messages: ChatMessage[];
-  createdAt: number;
-  updatedAt: number;
-}
-
-const CHAT_STORAGE_KEY = "llm-wiki.desktop.chats";
-const CHAT_STORAGE_LIMIT = 60;
-
-function readStoredConversations(): ChatConversation[] {
-  try {
-    const value = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) ?? "[]") as unknown;
-    if (!Array.isArray(value)) return [];
-    return value.filter((item): item is ChatConversation => {
-      if (!item || typeof item !== "object") return false;
-      const candidate = item as Record<string, unknown>;
-      return typeof candidate.id === "string"
-        && typeof candidate.title === "string"
-        && typeof candidate.workspaceId === "string"
-        && Array.isArray(candidate.messages);
-    });
-  } catch {
-    return [];
-  }
-}
-
-function conversationTime(ts: number): string {
-  const min = Math.floor((Date.now() - ts) / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时前`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day} 天前`;
+// --- AI chat helpers ---
+function conversationTime(isoOrTimestamp: string | number): string {
+  const ts = typeof isoOrTimestamp === "number" ? isoOrTimestamp : new Date(isoOrTimestamp).getTime();
+  if (Number.isNaN(ts)) return "刚刚";
+  const deltaSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (deltaSec < 60) return "刚刚";
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)} 分钟前`;
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)} 小时前`;
+  if (deltaSec < 86400 * 7) return `${Math.floor(deltaSec / 86400)} 天前`;
   return new Date(ts).toLocaleDateString();
 }
 
-function dayBucket(ts: number): string {
+function dayBucket(isoOrTimestamp: string | number): string {
+  const ts = typeof isoOrTimestamp === "number" ? isoOrTimestamp : new Date(isoOrTimestamp).getTime();
+  if (Number.isNaN(ts)) return "未知时间";
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   if (ts >= startOfToday) return "今天";
   if (ts >= startOfToday - 86400000) return "昨天";
-  if (ts >= startOfToday - 7 * 86400000) return "最近 7 天";
+  if (ts >= startOfToday - 6 * 86400000) return "本周";
   return "更早";
 }
 
-function ChatView({ workspace, focusTrigger, onOpenDocument }: { workspace: WorkspaceInfo | null; focusTrigger: number; onOpenDocument: (fileId: number) => void }): React.ReactElement {
-  const scopeId = workspace?.id ?? "preview";
-  const [conversations, setConversations] = useState<ChatConversation[]>([]);
-  const [hydratedScope, setHydratedScope] = useState<string | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+function ChatView({
+  workspace,
+  focusTrigger,
+  onOpenDocument,
+}: {
+  workspace: WorkspaceInfo | null;
+  focusTrigger: number;
+  onOpenDocument: (fileId: number) => void;
+}): React.ReactElement {
+  const {
+    sessions,
+    activeSessionId,
+    activeSession,
+    messages,
+    availableModels,
+    loadingSession,
+    sending,
+    streaming,
+    error: agentError,
+    selectSession,
+    sendMessage,
+    cancelPrompt,
+    deleteSession,
+    togglePin,
+  } = useAgentChat({ workspaceRoot: workspace?.root ?? null });
+
   const [filterQuery, setFilterQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "today" | "week">("all");
   const [query, setQuery] = useState("");
-  const [sending, setSending] = useState(false);
-  const activePiSessionRef = useRef<string | null>(null);
-  const [modelReady, setModelReady] = useState(false);
+  const [selectedModelKey, setSelectedModelKey] = useState<string>("pi-default");
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
-  // Load this workspace's saved conversations whenever the scope changes.
-  useEffect(() => {
-    const stored = readStoredConversations()
-      .filter((c) => c.workspaceId === scopeId)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-    setConversations(stored);
-    setActiveId(null);
-    setHydratedScope(scopeId);
-  }, [scopeId]);
-
-  // Track whether a Pi model is configured so the composer can say which
-  // mode (generative Q&A vs keyword search) a question will use.
-  useEffect(() => {
-    if (!workspace || !inTauriRuntime()) {
-      setModelReady(false);
-      return;
+  const modelGroups = useMemo(() => {
+    const groups = new Map<string, AvailableModelItem[]>();
+    for (const m of availableModels) {
+      const providerKey = m.provider;
+      const list = groups.get(providerKey) ?? [];
+      list.push(m);
+      groups.set(providerKey, list);
     }
-    let cancelled = false;
-    void invoke<{ provider: string; id: string } | null>("pi_config_get", { root: workspace.root })
-      .then((model) => { if (!cancelled) setModelReady(Boolean(model?.provider && model?.id)); })
-      .catch(() => { if (!cancelled) setModelReady(false); });
-    return () => { cancelled = true; };
-  }, [workspace]);
+    return Array.from(groups.entries()).map(([provider, models]) => {
+      const providerLabel =
+        provider === "openai-codex"
+          ? "OpenAI Codex"
+          : provider === "anthropic"
+            ? "Anthropic"
+            : provider === "openai"
+              ? "OpenAI"
+              : provider === "deepseek"
+                ? "DeepSeek"
+                : provider === "google"
+                  ? "Google Gemini"
+                  : provider.toUpperCase();
+      return {
+        provider,
+        label: providerLabel,
+        models,
+      };
+    });
+  }, [availableModels]);
 
-  // Persist every change back to localStorage. Storage is shared across
-  // workspaces, so other scopes' conversations must be kept intact — and
-  // writes are skipped until the load above has landed for this scope.
-  // While a Pi answer is streaming, writes are deferred: serializing every
-  // token delta would freeze the UI.
-  const isStreamingPi = conversations.some((c) => c.messages.some((m) => m.answer?.kind === "pi" && m.answer.streaming));
   useEffect(() => {
-    if (hydratedScope !== scopeId || isStreamingPi) return;
-    try {
-      const others = readStoredConversations().filter((c) => c.workspaceId !== scopeId);
-      localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify([...others, ...conversations.slice(0, CHAT_STORAGE_LIMIT)]));
-    } catch {
-      // localStorage is optional in embedded previews.
+    if (activeSession?.model?.id && activeSession.model.id !== "default" && activeSession.model.id !== "") {
+      const key = `${activeSession.model.provider}:${activeSession.model.id}`;
+      const exists = availableModels.some((m) => `${m.provider}:${m.id}` === key);
+      if (exists) setSelectedModelKey(key);
     }
-  }, [conversations, scopeId, hydratedScope, isStreamingPi]);
+  }, [activeSession, availableModels]);
 
-  // When focusTrigger changes (⌘K or search button clicked), focus the composer.
+  const selectedModelConfig = useMemo(() => {
+    if (selectedModelKey === "pi-default") return undefined;
+    const found = availableModels.find((m) => `${m.provider}:${m.id}` === selectedModelKey);
+    if (found) {
+      return {
+        provider: found.provider,
+        id: found.id,
+      };
+    }
+    return undefined;
+  }, [selectedModelKey, availableModels]);
+
   useEffect(() => {
     if (focusTrigger > 0) textareaRef.current?.focus();
   }, [focusTrigger]);
 
-  const active = conversations.find((c) => c.id === activeId) ?? null;
-  const activeMessageCount = active?.messages.length ?? 0;
-
-  // Keep the newest exchange in view when the active conversation updates.
   useEffect(() => {
     const el = threadRef.current;
-    if (el && activeMessageCount > 0) el.scrollTop = el.scrollHeight;
-  }, [activeId, activeMessageCount]);
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [activeSessionId, messages.length, streaming.text, streaming.thinking]);
 
-  const patchAnswer = (convId: string, messageId: string, answer: ChatAnswer): void => {
-    setConversations((previous) => previous.map((c) => c.id !== convId ? c : {
-      ...c,
-      updatedAt: Date.now(),
-      messages: c.messages.map((m) => m.id === messageId ? { ...m, answer } : m),
-    }));
-  };
-
-  // Synchronous sessionId → message map so streaming events route without
-  // reading React state. A freshly created conversation's `piSessionId` may
-  // not be committed yet when the first deltas arrive, which used to drop
-  // them; this map is registered before `pi_prompt` is even invoked.
-  const streamTargets = useRef<Map<string, { conversationId: string; messageId: string }>>(new Map());
-
-  // Append one Pi delta to the registered message. `field` selects the answer
-  // text or the thinking trace. `updatedAt` is left untouched: touching it per
-  // delta would re-sort and re-group the whole sidebar list on every flush;
-  // send / completion / failure already set it.
-  const appendDelta = (sessionId: string, field: "text" | "thinking", delta: string): void => {
-    if (!delta) return;
-    const target = streamTargets.current.get(sessionId);
-    if (!target) return;
-    setConversations((previous) => previous.map((conversation) => {
-      if (conversation.id !== target.conversationId) return conversation;
-      return {
-        ...conversation,
-        messages: conversation.messages.map((message) => {
-          if (message.id !== target.messageId) return message;
-          const answer = message.answer;
-          if (answer?.kind !== "pi") return message;
-          return {
-            ...message,
-            answer: {
-              ...answer,
-              [field]: (answer[field] ?? "") + delta,
-            },
-          };
-        }),
-      };
-    }));
-  };
-
-  // Token deltas arrive one per event; a state update per delta would freeze
-  // the UI on long answers. Buffer per session and flush on a fixed interval
-  // (not requestAnimationFrame): ~12 updates per second reads as smooth
-  // streaming while capping the React work per second.
-  const FLUSH_INTERVAL_MS = 80;
-  const deltaBuffer = useRef<Map<string, { text: string; thinking: string }>>(new Map());
-  const flushTimer = useRef<number | null>(null);
-
-  const flushDeltaBuffers = (): void => {
-    const buffered = deltaBuffer.current;
-    if (buffered.size === 0) return;
-    const entries = [...buffered];
-    buffered.clear();
-    setConversations((previous) => {
-      let next = previous;
-      for (const [sessionId, buffer] of entries) {
-        const target = streamTargets.current.get(sessionId);
-        if (!target || (!buffer.text && !buffer.thinking)) continue;
-        next = next.map((conversation) => {
-          if (conversation.id !== target.conversationId) return conversation;
-          return {
-            ...conversation,
-            messages: conversation.messages.map((message) => {
-              if (message.id !== target.messageId) return message;
-              const answer = message.answer;
-              if (answer?.kind !== "pi") return message;
-              return {
-                ...message,
-                answer: {
-                  ...answer,
-                  thinking: (answer.thinking ?? "") + buffer.thinking,
-                  text: answer.text + buffer.text,
-                  // First visible answer text ends the "thinking" phase.
-                  phase: buffer.text ? "answering" as const : answer.phase,
-                },
-              };
-            }),
-          };
-        });
-      }
-      return next;
-    });
-  };
-
-  const scheduleFlush = (): void => {
-    if (flushTimer.current !== null) return;
-    flushTimer.current = window.setTimeout(() => {
-      flushTimer.current = null;
-      flushDeltaBuffers();
-    }, FLUSH_INTERVAL_MS);
-  };
-
-  useEffect(() => () => {
-    if (flushTimer.current !== null) window.clearTimeout(flushTimer.current);
-  }, []);
-
-  // Drain one session's buffered deltas into the message (used before
-  // finalizing a prompt) and return what was drained.
-  const drainDeltaBuffer = (sessionId: string): { text: string; thinking: string } => {
-    const buffer = deltaBuffer.current.get(sessionId) ?? { text: "", thinking: "" };
-    deltaBuffer.current.delete(sessionId);
-    if (buffer.text) appendDelta(sessionId, "text", buffer.text);
-    if (buffer.thinking) appendDelta(sessionId, "thinking", buffer.thinking);
-    return buffer;
-  };
-
-  // Pi Runtime streaming events (text/thinking deltas etc.) forwarded by the
-  // Rust host. Runtime-side errors (model call failures) arrive as `error`
-  // events; keep them keyed by Pi session so the finalize/catch path can
-  // surface them.
-  const piErrors = useRef<Map<string, string>>(new Map());
-  useEffect(() => {
-    if (!inTauriRuntime()) return;
-    const unlisten = listen<{ sessionId?: string; event?: { type: string; delta?: string; message?: string } }>("pi-event", (event) => {
-      const payload = event.payload;
-      if (!payload?.event || typeof payload.sessionId !== "string") return;
-      if ((payload.event.type === "text_delta" || payload.event.type === "thinking_delta") && typeof payload.event.delta === "string") {
-        const buffer = deltaBuffer.current.get(payload.sessionId) ?? { text: "", thinking: "" };
-        if (payload.event.type === "text_delta") buffer.text += payload.event.delta;
-        else buffer.thinking += payload.event.delta;
-        deltaBuffer.current.set(payload.sessionId, buffer);
-        scheduleFlush();
-      } else if (payload.event.type === "error" && typeof payload.event.message === "string") {
-        piErrors.current.set(payload.sessionId, payload.event.message);
-      }
-    });
-    return () => { void unlisten.then((fn) => fn()); };
-  }, []);
-
-  // Asking a question appends a user message plus a pending assistant reply.
-  // With a Pi model configured, the reply streams from the Pi Runtime sidecar;
-  // otherwise it falls back to FTS5 search results.
-  const send = async (): Promise<void> => {
-    const text = query.trim();
+  const handleSend = async (textToSend?: string): Promise<void> => {
+    const text = (textToSend ?? query).trim();
     if (!text || !workspace || sending) return;
-    setSending(true);
     setQuery("");
-    const now = Date.now();
-    const convId = activeId ?? uid();
-    const assistantId = uid();
-    let usePi = false;
-    let modelConfigured = false;
-    try {
-      if (inTauriRuntime()) {
-        const model = await invoke<{ provider: string; id: string } | null>("pi_config_get", { root: workspace.root });
-        modelConfigured = Boolean(model?.provider && model?.id);
-        usePi = modelConfigured;
-      }
-    } catch { usePi = false; }
-    setConversations((previous) => {
-      const existing = previous.find((c) => c.id === convId);
-      const base: ChatConversation = existing ?? {
-        id: convId,
-        title: text.length > 30 ? `${text.slice(0, 30)}…` : text,
-        workspaceId: scopeId,
-        messages: [],
-        createdAt: now,
-        updatedAt: now,
-      };
-      const messages: ChatMessage[] = [
-        ...base.messages,
-        { id: uid(), role: "user", text, createdAt: now },
-        {
-          id: assistantId,
-          role: "assistant",
-          text: "",
-          answer: usePi
-            ? { kind: "pi", text: "", thinking: "", streaming: true, phase: "thinking" }
-            : { kind: "pending" },
-          createdAt: now,
-        },
-      ];
-      return [{ ...base, messages, updatedAt: now }, ...previous.filter((c) => c.id !== convId)];
-    });
-    setActiveId(convId);
-    if (usePi) {
-      let piSessionId: string | undefined;
-      try {
-        piSessionId = conversations.find((c) => c.id === convId)?.piSessionId;
-        if (!piSessionId) {
-          const created = await invoke<{ output?: { sessionId?: string } } & Record<string, unknown>>("pi_session_new", { root: workspace.root, title: text.slice(0, 30) });
-          piSessionId = created?.output?.sessionId;
-          if (!piSessionId) throw new Error("Pi 会话创建失败");
-          setConversations((previous) => previous.map((c) => c.id === convId ? { ...c, piSessionId } : c));
-        }
-        activePiSessionRef.current = piSessionId;
-        // Register the stream target before the prompt so deltas emitted the
-        // instant the model responds land on this message (new conversations
-        // may not have `piSessionId` committed to state yet).
-        streamTargets.current.set(piSessionId, { conversationId: convId, messageId: assistantId });
-        const sessionId = piSessionId;
-        const runPrompt = (): Promise<{ output?: { text?: string } } | undefined> =>
-          invoke("pi_prompt", { root: workspace.root, sessionId, text });
-        let promptResult: { output?: { text?: string } } | undefined;
-        try {
-          promptResult = await runPrompt();
-        } catch (reason: unknown) {
-          const detail = String(reason);
-          // A restart (or sidecar crash) wipes in-memory sessions; rebuild the
-          // Pi session once and replay the question instead of failing blank.
-          // "cannot be restored" covers persisted sessions whose API key is
-          // only available via the config the new-session request carries.
-          const recoverable = detail.includes("does not exist")
-            || detail.toUpperCase().includes("PI_SESSION_NOT_FOUND")
-            || detail.includes("cannot be restored");
-          if (piSessionId && recoverable) {
-            const created = await invoke<{ output?: { sessionId?: string } } & Record<string, unknown>>("pi_session_new", { root: workspace.root, title: text.slice(0, 30) });
-            const rebuilt = created?.output?.sessionId;
-            if (!rebuilt) throw new Error(`Pi 会话恢复失败：${detail}`);
-            streamTargets.current.delete(piSessionId);
-            piSessionId = rebuilt;
-            activePiSessionRef.current = rebuilt;
-            streamTargets.current.set(rebuilt, { conversationId: convId, messageId: assistantId });
-            setConversations((previous) => previous.map((c) => c.id === convId ? { ...c, piSessionId: rebuilt } : c));
-            promptResult = await invoke<{ output?: { text?: string } } | undefined>("pi_prompt", { root: workspace.root, sessionId: rebuilt, text });
-          } else {
-            throw reason;
-          }
-        }
-        // Flush any deltas still sitting in the buffer, then finalize the
-        // message while preserving the streamed text (patchAnswer would wipe it).
-        const leftover = drainDeltaBuffer(piSessionId);
-        // Providers that answer without streaming deltas deliver the final
-        // text in the completion; use it when nothing streamed.
-        const fallbackText = promptResult?.output?.text ?? "";
-        // The runtime can report a late failure (error event) after the invoke
-        // resolved, or resolve with no text at all — don't let either pass as
-        // a successful empty answer.
-        const runtimeError = piErrors.current.get(piSessionId);
-        if (runtimeError && !fallbackText && !leftover.text) {
-          piErrors.current.delete(piSessionId);
-          throw new Error(runtimeError);
-        }
-        piErrors.current.delete(piSessionId);
-        setConversations((previous) => previous.map((c) => {
-          if (c.id !== convId) return c;
-          const index = c.messages.findIndex((m) => m.id === assistantId);
-          if (index < 0) return c;
-          const message = c.messages[index]!;
-          const answer = message.answer;
-          if (answer?.kind !== "pi") return c;
-          const messages = [...c.messages];
-          const finalText = answer.text || fallbackText;
-          messages[index] = { ...message, text: finalText, answer: { ...answer, text: finalText, streaming: false, phase: "complete" } };
-          return { ...c, messages, updatedAt: Date.now() };
-        }));
-      } catch (reason: unknown) {
-        // Prefer the runtime-side error event (actual model failure reason);
-        // fall back to the invoke rejection message.
-        const detail = (piSessionId && piErrors.current.get(piSessionId)) ?? String(reason);
-        // Keep any partial answer (and thinking) that already streamed before
-        // the failure.
-        const leftover = piSessionId
-          ? (deltaBuffer.current.get(piSessionId) ?? { text: "", thinking: "" })
-          : { text: "", thinking: "" };
-        if (piSessionId) {
-          deltaBuffer.current.delete(piSessionId);
-          piErrors.current.delete(piSessionId);
-        }
-        setConversations((previous) => previous.map((c) => {
-          if (c.id !== convId) return c;
-          const index = c.messages.findIndex((m) => m.id === assistantId);
-          if (index < 0) return c;
-          const message = c.messages[index]!;
-          const answer = message.answer;
-          if (answer?.kind !== "pi") {
-            return { ...c, updatedAt: Date.now(), messages: c.messages.map((m) => m.id === assistantId ? { ...m, answer: { kind: "error", message: detail.includes("尚未配置") ? detail : `Pi 问答失败：${detail}` } as ChatAnswer } : m) };
-          }
-          const messages = [...c.messages];
-          const partialText = answer.text + leftover.text;
-          const partialThinking = (answer.thinking ?? "") + leftover.thinking;
-          if (!partialText.trim() && !partialThinking.trim()) {
-            messages[index] = {
-              ...message,
-              text: "",
-              answer: { kind: "error", message: `Pi 问答失败：${detail}` } as ChatAnswer,
-            };
-          } else {
-            messages[index] = {
-              ...message,
-              text: partialText,
-              answer: { ...answer, text: partialText, thinking: partialThinking, streaming: false, phase: "complete", errorMessage: detail },
-            } as ChatMessage;
-          }
-          return { ...c, messages, updatedAt: Date.now() };
-        }));
-      } finally {
-        if (piSessionId) streamTargets.current.delete(piSessionId);
-        activePiSessionRef.current = null;
-        setSending(false);
-      }
-      return;
-    }
-    try {
-      const hits = await invoke<SearchHit[]>("document_search", { root: workspace.root, query: text });
-      if (hits.length === 0 && inTauriRuntime() && !modelConfigured) {
-        patchAnswer(convId, assistantId, {
-          kind: "error",
-          message: "当前处于关键词检索模式（未配置 AI 模型），且没有匹配的文档。请在 设置 → AI 模型 (Pi) 配置模型后使用生成式问答；或先在设置中索引工作区、换用短关键词。",
-        });
-      } else {
-        const note = !modelConfigured
-          ? "关键词检索模式：未配置 AI 模型，回答为纯检索结果。可在 设置 → AI 模型 (Pi) 中配置后启用生成式问答。"
-          : undefined;
-        patchAnswer(convId, assistantId, { kind: "results", hits, note });
-      }
-    } catch (reason: unknown) {
-      const message = inTauriRuntime()
-        ? String(reason)
-        : "检索需要在 Tauri 桌面端运行（当前为浏览器预览模式）";
-      patchAnswer(convId, assistantId, { kind: "error", message });
-    } finally {
-      setSending(false);
-    }
+    await sendMessage(text, selectedModelConfig);
   };
 
-  const deleteConversation = (convId: string): void => {
-    setConversations((previous) => previous.filter((c) => c.id !== convId));
-    setActiveId((current) => (current === convId ? null : current));
-  };
-
-  const visible = useMemo(() => {
+  const visibleSessions = useMemo(() => {
     const q = filterQuery.trim().toLowerCase();
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    return conversations
-      .filter((c) => {
-        if (q && !`${c.title} ${c.messages.map((m) => m.text).join(" ")}`.toLowerCase().includes(q)) return false;
-        if (filter === "today") return c.updatedAt >= startOfToday;
-        if (filter === "week") return c.updatedAt >= startOfToday - 6 * 86400000;
+
+    return sessions
+      .filter((s) => {
+        if (q && !s.title.toLowerCase().includes(q)) return false;
+        const ts = new Date(s.updatedAt).getTime();
+        if (filter === "today") return ts >= startOfToday;
+        if (filter === "week") return ts >= startOfToday - 6 * 86400000;
         return true;
       })
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [conversations, filterQuery, filter]);
+      .sort((a, b) => {
+        if (Boolean(a.pinned) !== Boolean(b.pinned)) {
+          return a.pinned ? -1 : 1;
+        }
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [sessions, filterQuery, filter]);
 
-  const groups = useMemo(() => {
-    const map = new Map<string, ChatConversation[]>();
-    for (const c of visible) {
-      const label = dayBucket(c.updatedAt);
+  const sessionGroups = useMemo(() => {
+    const map = new Map<string, SessionInfo[]>();
+    for (const s of visibleSessions) {
+      const label = dayBucket(s.updatedAt);
       const arr = map.get(label) ?? [];
-      arr.push(c);
+      arr.push(s);
       map.set(label, arr);
     }
     return Array.from(map.entries());
-  }, [visible]);
+  }, [visibleSessions]);
 
-  const askCount = (c: ChatConversation): number => c.messages.filter((m) => m.role === "user").length;
-
-  return <div className="chat-page">
-    <aside className="library">
-      <div className="library-head">
-        <div className="section-title-row">
-          <div><span className="section-title">对话</span><span className="section-count">{conversations.length}</span></div>
-          <div className="small-actions">
-            <button className="lib-icon-btn" title="新对话" onClick={() => { setActiveId(null); textareaRef.current?.focus(); }}><Icon name="plus" size={15} /></button>
-          </div>
-        </div>
-        <label className="library-search">
-          <Icon name="search" size={15} />
-          <input value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} placeholder="搜索历史对话" />
-        </label>
-      </div>
-      <div className="library-filter">
-        {(["all", "today", "week"] as const).map((key) => (
-          <button key={key} className={filter === key ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(key)}>
-            {key === "all" ? "全部" : key === "today" ? "今天" : "本周"}
-          </button>
-        ))}
-      </div>
-      <div className="doc-scroll">
-        {visible.length === 0
-          ? <div className="doc-empty">{conversations.length === 0 ? <>还没有对话<br />提问后会自动保存在这里</> : <>没有匹配的对话<br />换一个关键词试试</>}</div>
-          : groups.map(([label, items]) => (
-            <div key={label}>
-              <div className="doc-group-label">{label}</div>
-              {items.map((c) => (
-                <article key={c.id} className={c.id === activeId ? "conv-item active" : "conv-item"} onClick={() => setActiveId(c.id)}>
-                  <div className="conv-icon"><Icon name="spark" size={15} /></div>
-                  <div className="conv-copy">
-                    <div className="conv-title">{c.title}</div>
-                    <div className="conv-meta">
-                      <span>{askCount(c)} 次提问</span><span className="meta-dot" />
-                      <span>{conversationTime(c.updatedAt)}</span>
-                    </div>
-                  </div>
-                  <button className="conv-delete" aria-label={`删除对话 ${c.title}`} onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}><Icon name="trash" size={14} /></button>
-                </article>
-              ))}
-            </div>
-          ))}
-      </div>
-    </aside>
-
-    <section className="chat-detail">
-      <div className="reader-toolbar">
-        <div className="toolbar-breadcrumb">
-          <span className="crumb"><span>{workspace?.title ?? "LLM Wiki"}</span></span>
-          <span className="crumb"><em>/</em><span className="current">{active ? active.title : "新对话"}</span></span>
-        </div>
-        <div className="toolbar-spacer" />
-        {active && <span className="chat-meta-chip">{askCount(active)} 次提问 · {active.messages.length} 条消息</span>}
-        {active && <button className="tool-button" onClick={() => deleteConversation(active.id)}><Icon name="trash" size={14} /><span>删除对话</span></button>}
-      </div>
-
-      <div className="reader-scroll" ref={threadRef}>
-        {active === null
-          ? (conversations.length === 0
-            ? <div className="chat-welcome">
-              <div className="hero-icon">✦</div>
-              <h2>{modelReady ? "向 Pi 提问" : "搜索当前工作空间"}</h2>
-              <p>{modelReady
-                ? "回答基于工作区已索引文档，由 Pi 流式生成，并标注引用来源。"
-                : "当前为关键词检索模式。配置 AI 模型（设置 → AI 模型）后，可在此使用基于真实文档的 Pi 生成式问答。"}</p>
-            </div>
-            : <div className="reader-placeholder"><div className="reader-placeholder-icon">✦</div><h3>选择左侧对话</h3><p>或直接在下方提问，自动开始一段新对话。</p></div>)
-          : <div className="chat-thread-inner">
-            {active.messages.map((m) => m.role === "user"
-              ? <div className="msg-user" key={m.id}><div className="msg-user-bubble">{m.text}</div></div>
-              : <AssistantMessage key={m.id} message={m} onOpenDocument={onOpenDocument} />)}
-          </div>}
-      </div>
-
-      <div className="chat-composer">
-        <div className="composer-inner">
-          <textarea
-            ref={textareaRef}
-            placeholder={
-              !workspace
-                ? "请先选择一个工作区"
-                : modelReady
-                  ? "向 Pi 提问，回答基于工作区已索引文档…"
-                  : "未配置 AI 模型：将以关键词检索文档（可在设置中配置模型）"
-            }
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            disabled={!workspace}
-          />
-          <div className="composer-toolbar">
-            <span className="composer-tool">{workspace ? workspace.title : "未选择工作区"}</span>
-            {sending && activePiSessionRef.current
-              ? <button className="send-button stop" aria-label="停止生成" onClick={() => {
-                  const sessionId = activePiSessionRef.current;
-                  if (sessionId && workspace) void invoke("pi_session_cancel", { root: workspace.root, sessionId }).catch(() => undefined);
-                }}>■</button>
-              : <button className="send-button" aria-label="发送" disabled={!workspace || !query.trim() || sending} onClick={() => void send()}>
-                  {sending ? "…" : "↑"}
-                </button>}
-          </div>
-        </div>
-        <p className="composer-note">
-          {modelReady ? "Pi 生成式问答 · Enter 发送" : "关键词检索模式 (FTS5) · 未配置 AI 模型"} · Enter 提问 · Shift+Enter 换行
-        </p>
-      </div>
-    </section>
-  </div>;
-}
-
-// Memoized: streaming updates rebuild only the message being appended;
-// untouched messages keep their object identity, so historical messages
-// (and their parsed Markdown) don't re-render on every flush.
-const AssistantMessage = memo(function AssistantMessage({ message, onOpenDocument }: { message: ChatMessage; onOpenDocument: (fileId: number) => void }): React.ReactElement {
-  const answer = message.answer ?? { kind: "pending" as const };
-  return <div className="msg-assistant">
-    <div className="msg-avatar">✦</div>
-    <div className="msg-assistant-body">
-      {answer.kind === "pending" && <p className="msg-status">正在检索工作空间文档…</p>}
-      {answer.kind === "pi" && <>
-        {Boolean(answer.thinking) && (
-          <details className="msg-thinking" open={answer.phase === "thinking"}>
-            <summary>{answer.phase === "thinking" ? "正在思考…" : "查看思考过程"}</summary>
-            <div className="msg-thinking-body">{answer.thinking}</div>
-          </details>
-        )}
-        {answer.text && (answer.streaming
-          ? <div className="msg-pi-streaming">{answer.text}</div>
-          : <div className="msg-pi-body"><ReactMarkdown>{answer.text}</ReactMarkdown></div>)}
-        {!answer.text && !answer.thinking && <p className="msg-status">{answer.streaming ? "Pi 正在思考…" : "Pi 未返回文本输出。"}</p>}
-        {answer.errorMessage && <div className="msg-error">回答未完整生成：{answer.errorMessage}</div>}
-      </>}
-      {answer.kind === "error" && <div className="msg-error">{answer.message}</div>}
-      {answer.kind === "results" && (answer.hits.length === 0
-        ? <p className="msg-status">没有找到匹配的文档。尝试换一个关键词，或先索引工作区。</p>
-        : <>
-          {answer.note && <p className="msg-note">{answer.note}</p>}
-          <p className="msg-status">找到 {answer.hits.length} 条相关文档：</p>
-          <div className="hit-list">
-            {answer.hits.map((hit) => (
-              <article key={hit.chunkId} className="hit-card" onClick={() => onOpenDocument(hit.fileId)}>
-                <div className="hit-card-path">
-                  <span className="hit-card-name">{docName(hit.path)}</span>
-                  <span className="hit-card-lines">L{hit.startLine}-{hit.endLine}</span>
-                </div>
-                <div className="hit-card-filepath">{hit.path}</div>
-                <p className="hit-card-preview">{hit.preview}</p>
-              </article>
-            ))}
-          </div>
-        </>)}
-    </div>
-  </div>;
-});
-
-// --- Documents page: helpers + sub-components (layout mirrors preview.html) -
-
-function slugify(text: string): string {
   return (
-    text
-      .toLowerCase()
-      .trim()
-      .replace(/[^\p{L}\p{N}\s-]/gu, "")
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "") || "section"
+    <div className="chat-page">
+      <aside className="library">
+        <div className="library-head">
+          <div className="section-title-row">
+            <div>
+              <span className="section-title">历史对话</span>
+              <span className="section-count">{sessions.length}</span>
+            </div>
+            <div className="small-actions">
+              <button
+                className="lib-icon-btn"
+                title="新建对话"
+                onClick={() => {
+                  selectSession(null);
+                  textareaRef.current?.focus();
+                }}
+              >
+                <Icon name="plus" size={15} />
+              </button>
+            </div>
+          </div>
+          <label className="library-search">
+            <Icon name="search" size={14} />
+            <input
+              value={filterQuery}
+              onChange={(e) => setFilterQuery(e.target.value)}
+              placeholder="搜索历史问答记录"
+            />
+          </label>
+        </div>
+        <div className="library-filter">
+          {(["all", "today", "week"] as const).map((key) => (
+            <button
+              key={key}
+              className={filter === key ? "filter-chip active" : "filter-chip"}
+              onClick={() => setFilter(key)}
+            >
+              {key === "all" ? "全部" : key === "today" ? "今天" : "本周"}
+            </button>
+          ))}
+        </div>
+        <div className="doc-scroll">
+          {visibleSessions.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)", fontSize: "12px", lineHeight: "1.6" }}>
+              {sessions.length === 0 ? (
+                <>暂无历史对话<br />提问后将自动沉淀在此</>
+              ) : (
+                <>未匹配到对话<br />请尝试更换搜索词</>
+              )}
+            </div>
+          ) : (
+            sessionGroups.map(([label, items]) => (
+              <div key={label}>
+                <div className="doc-group-label">{label}</div>
+                {items.map((s) => (
+                  <article
+                    key={s.sessionId}
+                    className={s.sessionId === activeSessionId ? "conv-item active" : "conv-item"}
+                    onClick={() => selectSession(s.sessionId)}
+                  >
+                    <div className="conv-icon">
+                      <Icon name="spark" size={14} />
+                    </div>
+                    <div className="conv-copy">
+                      <div className="conv-title">
+                        {s.title}
+                        {s.pinned && <span className="conv-pin-badge">★</span>}
+                      </div>
+                      <div className="conv-meta">
+                        <span>{conversationTime(s.updatedAt)}</span>
+                      </div>
+                    </div>
+                    <button
+                      className="conv-delete"
+                      aria-label={`删除对话 ${s.title}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void deleteSession(s.sessionId);
+                      }}
+                    >
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
+
+      <section className="chat-detail">
+        <div className="reader-toolbar">
+          <div className="toolbar-breadcrumb">
+            <span className="crumb">
+              <span>{workspace?.title ?? "LLM Wiki"}</span>
+            </span>
+            <span className="crumb">
+              <em>/</em>
+              <span className="current">{activeSession ? activeSession.title : "新对话"}</span>
+            </span>
+          </div>
+          <div className="toolbar-spacer" />
+          {activeSession && (
+            <>
+              <span className="chat-meta-chip">
+                {messages.length} 条消息
+              </span>
+              <button
+                className="tool-button"
+                title={activeSession.pinned ? "取消置顶" : "置顶对话"}
+                onClick={() => void togglePin(activeSession.sessionId)}
+              >
+                <Icon name="pin" size={13} />
+                <span>{activeSession.pinned ? "已置顶" : "置顶"}</span>
+              </button>
+              <button
+                className="tool-button"
+                onClick={() => void deleteSession(activeSession.sessionId)}
+              >
+                <Icon name="trash" size={13} />
+                <span>删除</span>
+              </button>
+            </>
+          )}
+        </div>
+
+        <div className="reader-scroll" ref={threadRef}>
+          {activeSessionId === null && messages.length === 0 ? (
+            <div className="chat-welcome">
+              <div className="hero-icon">
+                <Icon name="spark" size={28} />
+              </div>
+              <h2>向 Pi 智能体发起问答</h2>
+              <p>
+                回答基于本地知识库已索引文档，由 Pi CLI 运行时流式生成，支持工具受控调用与安全草稿写入。
+              </p>
+              <div className="prompt-suggestions">
+                <button
+                  type="button"
+                  className="prompt-chip"
+                  onClick={() => {
+                    const prompt = "总结当前工作区核心知识库的内容概要";
+                    setQuery(prompt);
+                    void handleSend(prompt);
+                  }}
+                >
+                  <Icon name="spark" size={12} />
+                  总结工作区核心内容
+                </button>
+                <button
+                  type="button"
+                  className="prompt-chip"
+                  onClick={() => {
+                    const prompt = "列出知识库中所有核心架构与模块规范";
+                    setQuery(prompt);
+                    void handleSend(prompt);
+                  }}
+                >
+                  <Icon name="network" size={12} />
+                  列出系统架构与模块
+                </button>
+                <button
+                  type="button"
+                  className="prompt-chip"
+                  onClick={() => {
+                    const prompt = "检索近期更新或重要的文档并给出清单";
+                    setQuery(prompt);
+                    void handleSend(prompt);
+                  }}
+                >
+                  <Icon name="file" size={12} />
+                  查询近期重要文档
+                </button>
+                <button
+                  type="button"
+                  className="prompt-chip"
+                  onClick={() => {
+                    const prompt = "检索工作区中的 API 与接口设计规范";
+                    setQuery(prompt);
+                    void handleSend(prompt);
+                  }}
+                >
+                  <Icon name="terminal" size={12} />
+                  检索 API 与接口设计
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="chat-thread-inner">
+              {loadingSession ? (
+                <p className="msg-status">正在加载会话记录…</p>
+              ) : (
+                <>
+                  {messages.map((m) =>
+                    m.role === "user" ? (
+                      <div className="msg-user" key={m.id}>
+                        <div className="msg-user-bubble">{m.text}</div>
+                      </div>
+                    ) : (
+                      <AssistantMessage key={m.id} message={m} onOpenDocument={onOpenDocument} />
+                    ),
+                  )}
+
+                  {sending && (
+                    <div className="msg-assistant">
+                      <div className="msg-avatar">
+                        <Icon name="spark" size={16} />
+                      </div>
+                      <div className="msg-assistant-body">
+                        {Boolean(streaming.thinking) && (
+                          <details className="msg-thinking" open={streaming.phase === "thinking"}>
+                            <summary>
+                              {streaming.phase === "thinking" ? "正在思考…" : "查看思考过程"}
+                            </summary>
+                            <div className="msg-thinking-body">{streaming.thinking}</div>
+                          </details>
+                        )}
+                        {streaming.toolCalls.length > 0 && (
+                          <div className="msg-tool-list">
+                            {streaming.toolCalls.map((tool) => (
+                              <span
+                                key={tool.toolCallId}
+                                className={
+                                  tool.result === undefined
+                                    ? "msg-tool-pill executing"
+                                    : tool.isError
+                                      ? "msg-tool-pill error"
+                                      : "msg-tool-pill"
+                                }
+                                title={JSON.stringify(tool.args)}
+                              >
+                                <Icon name="settings" size={12} /> {tool.toolName} {tool.result === undefined ? "…" : "✓"}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {streaming.text ? (
+                          <div className="msg-pi-streaming">{streaming.text}</div>
+                        ) : !streaming.thinking && streaming.toolCalls.length === 0 ? (
+                          <p className="msg-status">Pi 正在检索并思考…</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
+
+                  {agentError && <div className="msg-error">请求失败：{agentError}</div>}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="chat-composer">
+          <div className="composer-inner">
+            <textarea
+              ref={textareaRef}
+              placeholder={
+                !workspace
+                  ? "请先选择一个工作区"
+                  : "向 Pi 智能体提问，按 Enter 发送…"
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void handleSend();
+                }
+              }}
+              disabled={!workspace}
+            />
+            <div className="composer-toolbar">
+              <div className="composer-toolbar-left">
+                <span className="composer-tool">{workspace ? workspace.title : "未选择工作区"}</span>
+                <div className="model-selector-chip" title="选择 Pi 已认证模型">
+                  <span className="model-selector-spark"><Icon name="spark" size={12} /></span>
+                  <select
+                    value={selectedModelKey}
+                    onChange={(e) => setSelectedModelKey(e.target.value)}
+                    disabled={!workspace || sending || availableModels.length === 0}
+                    aria-label="选择模型"
+                  >
+                    <option value="pi-default">Pi 默认模型 (全局首选)</option>
+                    {availableModels.length === 0 ? (
+                      <option value="" disabled>
+                        未检测到已认证模型 (在 Pi CLI 登录)
+                      </option>
+                    ) : (
+                      modelGroups.map((group) => (
+                        <optgroup key={group.provider} label={group.label}>
+                          {group.models.map((m) => (
+                            <option key={`${m.provider}:${m.id}`} value={`${m.provider}:${m.id}`}>
+                              {m.name || m.id} {m.isDefault ? "★" : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))
+                    )}
+                  </select>
+                  <span className="model-selector-arrow">▼</span>
+                </div>
+              </div>
+              {sending ? (
+                <button
+                  className="send-button stop"
+                  aria-label="停止生成"
+                  onClick={() => void cancelPrompt()}
+                >
+                  <Icon name="stop" size={14} />
+                </button>
+              ) : (
+                <button
+                  className="send-button"
+                  aria-label="发送"
+                  disabled={!workspace || !query.trim() || sending}
+                  onClick={() => void handleSend()}
+                >
+                  <Icon name="arrowUp" size={15} />
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="composer-note">
+            Pi 生成式问答 · Enter 发送 · Shift+Enter 换行
+          </p>
+        </div>
+      </section>
+    </div>
   );
 }
 
-/** Recursively extracts plain text from react-markdown heading children. */
+const AssistantMessage = memo(function AssistantMessage({
+  message,
+  onOpenDocument: _onOpenDocument,
+}: {
+  message: ChatMessageItem;
+  onOpenDocument: (fileId: number) => void;
+}): React.ReactElement {
+  return (
+    <div className="msg-assistant">
+      <div className="msg-avatar">
+        <Icon name="spark" size={16} />
+      </div>
+      <div className="msg-assistant-body">
+        {Boolean(message.thinking) && (
+          <details className="msg-thinking">
+            <summary>查看思考过程</summary>
+            <div className="msg-thinking-body">{message.thinking}</div>
+          </details>
+        )}
+        {message.toolCalls && message.toolCalls.length > 0 && (
+          <div className="msg-tool-list">
+            {message.toolCalls.map((tool) => (
+              <span
+                key={tool.toolCallId}
+                className={tool.isError ? "msg-tool-pill error" : "msg-tool-pill"}
+                title={JSON.stringify(tool.args)}
+              >
+                <Icon name="settings" size={12} /> {tool.toolName}
+              </span>
+            ))}
+          </div>
+        )}
+        {message.text ? (
+          <div className="msg-pi-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+          </div>
+        ) : !message.thinking ? (
+          <p className="msg-status">未返回文本输出。</p>
+        ) : null}
+        {message.errorMessage && (
+          <div className="msg-error">生成未完成：{message.errorMessage}</div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+// --- Documents View ---
+interface HeadingEntry {
+  level: number;
+  text: string;
+  slug: string;
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\u4e00-\u9fa5\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
+}
+
 function extractText(children: React.ReactNode): string {
   if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (!children) return "";
   if (Array.isArray(children)) return children.map(extractText).join("");
-  if (children && typeof children === "object" && "props" in children) {
+  if (typeof children === "object" && "props" in children) {
     return extractText((children as { props: { children?: React.ReactNode } }).props.children);
   }
   return "";
 }
 
-interface HeadingEntry { level: number; text: string; slug: string; }
-
-/** Parses h2/h3 headings out of raw markdown (skipping fenced code blocks). */
 function extractHeadings(markdown: string): HeadingEntry[] {
-  const entries: HeadingEntry[] = [];
-  let inFence = false;
-  for (const line of markdown.split("\n")) {
-    if (/^\s*```/.test(line)) { inFence = !inFence; continue; }
-    if (inFence) continue;
-    const m = /^(#{2,3})\s+(.+?)\s*$/.exec(line);
-    if (m && m[1] && m[2]) {
-      const text = m[2].replace(/[*`_]/g, "").trim();
-      entries.push({ level: m[1].length, text, slug: slugify(text) });
-    }
+  const headings: HeadingEntry[] = [];
+  const lines = markdown.split(/\r?\n/);
+  for (const line of lines) {
+    const m = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (!m || !m[1] || !m[2]) continue;
+    const level = m[1].length;
+    const text = m[2].trim();
+    if (!text) continue;
+    headings.push({ level, text, slug: slugify(text) });
   }
-  return entries;
+  return headings;
 }
 
-/**
- * Lifts the leading h1 out as the title and the first plain paragraph out as the
- * subtitle, returning the remaining body so neither is rendered twice. Fenced
- * code blocks are skipped when scanning so their contents never become a title
- * or subtitle.
- */
 function splitFrontMatter(markdown: string): { title: string | null; subtitle: string | null; body: string } {
+  if (!markdown.startsWith("---")) return { title: null, subtitle: null, body: markdown };
+  const end = markdown.indexOf("\n---", 3);
+  if (end === -1) return { title: null, subtitle: null, body: markdown };
+  const rawFm = markdown.slice(3, end);
+  const body = markdown.slice(end + 4).replace(/^\r?\n/, "");
   let title: string | null = null;
-  let rest = markdown;
-  const h1 = /^\s*#\s+(.+?)\s*$/m.exec(markdown);
-  if (h1 && h1[1]) {
-    const idx = h1.index ?? 0;
-    title = h1[1].replace(/[*`_]/g, "").trim();
-    rest = (markdown.slice(0, idx) + markdown.slice(idx + h1[0].length)).replace(/^\n+/, "");
-  }
-
-  const lines = rest.split("\n");
-  const blocks: Array<{ start: number; end: number; kind: string; text: string }> = [];
-  let i = 0;
-  let inFence = false;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line === undefined) break;
-    if (/^\s*```/.test(line)) { inFence = !inFence; i += 1; continue; }
-    if (inFence || !line.trim()) { i += 1; continue; }
-    const first = line.trim();
-    let kind = "paragraph";
-    if (/^#{1,6}\s/.test(first)) kind = "heading";
-    else if (/^>\s?/.test(first)) kind = "quote";
-    else if (/^[-*+]\s/.test(first)) kind = "list";
-    else if (/^\d+\.\s/.test(first)) kind = "list";
-    else if (/^\|/.test(first)) kind = "table";
-    const start = i;
-    i += 1;
-    while (i < lines.length) {
-      const next = lines[i];
-      if (next === undefined || !next.trim() || /^\s*```/.test(next)) break;
-      i += 1;
-    }
-    blocks.push({ start, end: i, kind, text: lines.slice(start, i).join("\n") });
-  }
-
-  const subtitleBlock = blocks.find((b) => b.kind === "paragraph");
   let subtitle: string | null = null;
-  let body = rest;
-  if (subtitleBlock) {
-    subtitle = subtitleBlock.text.replace(/[*`_]/g, "").trim();
-    const remaining = lines.slice();
-    remaining.splice(subtitleBlock.start, subtitleBlock.end - subtitleBlock.start);
-    body = remaining.join("\n").replace(/^\n+/, "");
+  for (const line of rawFm.split(/\r?\n/)) {
+    const titleMatch = /^title:\s*["']?(.*?)["']?$/.exec(line);
+    if (titleMatch && titleMatch[1]) title = titleMatch[1].trim();
+    const descMatch = /^(?:description|subtitle):\s*["']?(.*?)["']?$/.exec(line);
+    if (descMatch && descMatch[1]) subtitle = descMatch[1].trim();
   }
   return { title, subtitle, body };
 }
 
 function docName(path: string): string {
-  const base = path.split("/").pop() ?? path;
-  return base.replace(/\.[^.]+$/, "");
+  const clean = path.replace(/\\/g, "/");
+  const file = clean.split("/").pop() ?? clean;
+  return file.replace(/\.[^.]+$/, "");
 }
 
 function parentLabel(path: string): string {
-  const parts = path.split("/").filter(Boolean);
+  const clean = path.replace(/\\/g, "/");
+  const parts = clean.split("/");
   if (parts.length <= 1) return "根目录";
   return parts.slice(0, -1).join(" / ");
 }
 
-function toTimestamp(value: string | null): number {
-  if (!value) return 0;
-  const t = new Date(value).getTime();
-  return Number.isNaN(t) ? 0 : t;
-}
+function DocumentsEmptyState({
+  workspace,
+  includeDirs,
+  defaultDirs,
+  indexing,
+  dirSaving,
+  indexError,
+  dirError,
+  indexFeedback,
+  onReindex,
+  onAddDir,
+  onRemoveDir,
+  onResetDirs,
+  onOpenImports,
+  onOpenSettings,
+}: {
+  workspace: WorkspaceInfo | null;
+  includeDirs: string[];
+  defaultDirs: string[];
+  indexing: boolean;
+  dirSaving: boolean;
+  indexError: string | null;
+  dirError: string | null;
+  indexFeedback: string | null;
+  onReindex: () => void;
+  onAddDir: (dir: string, reindex?: boolean) => void;
+  onRemoveDir: (dir: string, reindex?: boolean) => void;
+  onResetDirs: () => void;
+  onOpenImports: () => void;
+  onOpenSettings: () => void;
+}): React.ReactElement {
+  const [newDirInput, setNewDirInput] = useState("");
+  const presets = ["wiki", "docs", "kb", "knowledge", "notes"];
+  const availablePresets = presets.filter((p) => !includeDirs.includes(p));
 
-function relativeTime(value: string | null): string {
-  if (!value) return "未索引";
-  const t = new Date(value).getTime();
-  if (Number.isNaN(t)) return "未知";
-  const min = Math.floor((Date.now() - t) / 60000);
-  if (min < 1) return "刚刚";
-  if (min < 60) return `${min} 分钟前`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时前`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day} 天前`;
-  return new Date(value).toLocaleDateString();
-}
+  const handleAddSubmit = (e: React.FormEvent): void => {
+    e.preventDefault();
+    const val = newDirInput.trim();
+    if (!val) return;
+    onAddDir(val, true);
+    setNewDirInput("");
+  };
 
-const ICON_PATHS: Record<string, React.ReactNode> = {
-  file: (<><path d="M6 3.5h8.5L19 8v12.5H6v-17Z" /><path d="M14.5 3.5V8H19M9 12h7M9 15h7M9 18h4" /></>),
-  spark: (<><path d="M12 2.8c.4 4.8 2.4 6.8 7.2 7.2-4.8.4-6.8 2.4-7.2 7.2-.4-4.8-2.4-6.8-7.2-7.2 4.8-.4 6.8-2.4 7.2-7.2Z" /><path d="M19 15.6c.2 2.1 1.1 3 3.2 3.2-2.1.2-3 1.1-3.2 3.2-.2-2.1-1.1-3-3.2-3.2 2.1-.2 3-1.1 3.2-3.2Z" fill="currentColor" stroke="none" /></>),
-  link: <path d="m9.5 14.5 5-5M7.8 17.5l-1.3 1.3a3.7 3.7 0 1 1-5.3-5.3l3-3a3.7 3.7 0 0 1 5.3 0M16.2 6.5l1.3-1.3a3.7 3.7 0 1 1 5.3 5.3l-3 3a3.7 3.7 0 0 1-5.3 0" />,
-  panel: (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></>),
-  more: (<><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" /></>),
-  search: (<><circle cx="10.5" cy="10.5" r="6.2" /><path d="m15.2 15.2 4.3 4.3" /></>),
-  sort: <path d="M8 5v14m0 0-3-3m3 3 3-3M16 19V5m0 0-3 3m3-3 3 3" />,
-  chevron: <path d="m7 9.5 5 5 5-5" />,
-  plus: <path d="M12 5v14M5 12h14" />,
-  filter: <path d="M4 6h16M7 12h10M10 18h4" />,
-  trash: (<><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7" /><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" /></>),
-};
-
-function Icon({ name, size = 16, strokeWidth = 1.7 }: { name: string; size?: number; strokeWidth?: number }): React.ReactElement {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      {ICON_PATHS[name] ?? null}
-    </svg>
+    <div className="doc-empty-container">
+      <div className="doc-empty-card">
+        <div className="doc-empty-icon">
+          <Icon name="file" size={28} />
+        </div>
+        <h2>未检测到已索引文档</h2>
+        <p className="doc-empty-desc">
+          当前工作区扫描目录下暂无 Markdown 或文本文件。您可以配置已有文档目录快速构建索引，或直接导入外部知识文件。
+        </p>
+
+        {workspace && (
+          <div className="doc-empty-root-box">
+            <Icon name="folder" size={13} />
+            <span>当前工作区：</span>
+            <code>{workspace.root}</code>
+          </div>
+        )}
+
+        <div className="doc-quick-dirs-section">
+          <div className="doc-quick-dirs-head">
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Icon name="folder" size={14} />
+              <span>知识库扫描目录配置</span>
+            </div>
+            <small>{includeDirs.length} 个配置目录</small>
+          </div>
+
+          <div className="doc-quick-chips">
+            {includeDirs.map((dir) => (
+              <span key={dir} className="doc-dir-chip">
+                <Icon name="folder" size={12} />
+                <code>{dir}/</code>
+                <button
+                  type="button"
+                  title={`移除 ${dir}`}
+                  disabled={dirSaving || includeDirs.length <= 1}
+                  onClick={() => onRemoveDir(dir, true)}
+                >
+                  <Icon name="close" size={11} />
+                </button>
+              </span>
+            ))}
+          </div>
+
+          <form className="doc-quick-add-form" onSubmit={handleAddSubmit}>
+            <div className="doc-quick-input-wrapper">
+              <Icon name="folder" size={14} className="doc-quick-input-icon" />
+              <input
+                value={newDirInput}
+                onChange={(e) => setNewDirInput(e.target.value)}
+                placeholder="输入工作区内的相对目录 (如 docs、notes 或 packages/kb)"
+                disabled={!workspace || dirSaving || indexing}
+              />
+            </div>
+            <button type="submit" disabled={!workspace || dirSaving || indexing || !newDirInput.trim()}>
+              <Icon name="plus" size={13} />
+              添加并扫描
+            </button>
+          </form>
+
+          {availablePresets.length > 0 && (
+            <div className="doc-presets-row">
+              <span>快速添加常用目录：</span>
+              {availablePresets.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className="doc-preset-btn"
+                  disabled={!workspace || dirSaving || indexing}
+                  onClick={() => onAddDir(p, true)}
+                >
+                  + {p}
+                </button>
+              ))}
+              {includeDirs.length > 0 && !defaultDirs.every((d) => includeDirs.includes(d)) && (
+                <button type="button" className="doc-preset-btn" onClick={onResetDirs} style={{ marginLeft: "auto" }}>
+                  恢复默认
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="doc-empty-actions">
+          <button className="primary-button" disabled={!workspace || indexing} onClick={onReindex}>
+            <Icon name="refresh" size={14} className={indexing ? "spin" : ""} />
+            {indexing ? "正在扫描索引中…" : "立即重新扫描索引"}
+          </button>
+          <button className="tool-button" onClick={onOpenImports}>
+            <Icon name="import" size={14} />
+            导入外部文档
+          </button>
+          <button className="tool-button" onClick={onOpenSettings}>
+            <Icon name="settings" size={14} />
+            工作区设置
+          </button>
+        </div>
+
+        {dirError && <div className="doc-status-banner error">目录配置错误：{dirError}</div>}
+        {indexError && <div className="doc-status-banner error">索引错误：{indexError}</div>}
+        {indexFeedback && <div className="doc-status-banner success">{indexFeedback}</div>}
+      </div>
+    </div>
   );
 }
 
-function DocumentsView({ workspace, onAskAI, focusFileId = null }: { workspace: WorkspaceInfo | null; onAskAI: () => void; focusFileId?: number | null }): React.ReactElement {
+function DocumentsView({
+  workspace,
+  onAskAI,
+  onOpenImports,
+  onOpenSettings,
+  onIndexed,
+  focusFileId = null,
+}: {
+  workspace: WorkspaceInfo | null;
+  onAskAI: () => void;
+  onOpenImports: () => void;
+  onOpenSettings: () => void;
+  onIndexed: () => void;
+  focusFileId?: number | null;
+}): React.ReactElement {
   const [page, setPage] = useState<LoadState<KbFileListPage>>({ status: "loading" });
   const [selectedId, setSelectedId] = useState<number | null>(focusFileId);
   const [content, setContent] = useState<LoadState<KbFileContent>>({ status: "loading" });
+  const [indexing, setIndexing] = useState(false);
+  const [indexError, setIndexError] = useState<string | null>(null);
+  const [indexFeedback, setIndexFeedback] = useState<string | null>(null);
+  const [includeDirs, setIncludeDirs] = useState<string[]>([]);
+  const [defaultDirs, setDefaultDirs] = useState<string[]>([]);
+  const [dirSaving, setDirSaving] = useState(false);
+  const [dirError, setDirError] = useState<string | null>(null);
+  const [docReloadKey, setDocReloadKey] = useState(0);
 
   useEffect(() => {
     if (!workspace || !inTauriRuntime()) {
@@ -1364,13 +1429,35 @@ function DocumentsView({ workspace, onAskAI, focusFileId = null }: { workspace: 
     let cancelled = false;
     setPage({ status: "loading" });
     void invoke<KbFileListPage>("documents_list", { root: workspace.root })
-      .then((data) => { if (!cancelled) { setPage({ status: "ready", data }); setSelectedId(focusFileId); } })
-      .catch((reason: unknown) => { if (!cancelled) setPage({ status: "error", message: String(reason) }); });
-    return () => { cancelled = true; };
-  }, [workspace]);
+      .then((data) => {
+        if (!cancelled) {
+          setPage({ status: "ready", data });
+          setSelectedId(focusFileId);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setPage({ status: "error", message: String(reason) });
+      });
+
+    void invoke<KbConfigInfo>("kb_config_get", { root: workspace.root })
+      .then((config) => {
+        if (!cancelled) {
+          setIncludeDirs(config.include);
+          setDefaultDirs(config.defaults);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace, docReloadKey, focusFileId]);
 
   useEffect(() => {
-    if (selectedId === null || !workspace) { setContent({ status: "loading" }); return; }
+    if (selectedId === null || !workspace) {
+      setContent({ status: "loading" });
+      return;
+    }
     let cancelled = false;
     setContent({ status: "loading" });
     void invoke<KbFileContent>("document_read", { root: workspace.root, fileId: selectedId })
@@ -1379,257 +1466,373 @@ function DocumentsView({ workspace, onAskAI, focusFileId = null }: { workspace: 
         if (data) setContent({ status: "ready", data });
         else setContent({ status: "error", message: "文档内容为空或不存在" });
       })
-      .catch((reason: unknown) => { if (!cancelled) setContent({ status: "error", message: String(reason) }); });
-    return () => { cancelled = true; };
+      .catch((reason: unknown) => {
+        if (!cancelled) setContent({ status: "error", message: String(reason) });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [workspace, selectedId]);
 
-  if (page.status === "loading") return <div className="empty-state"><div className="empty-icon">▤</div><h2>加载文档列表…</h2></div>;
-  if (page.status === "error") return <div className="empty-state"><div className="empty-icon">▤</div><h2>无法加载文档</h2><p>{page.message}</p></div>;
+  const runIndex = async (reset = false): Promise<void> => {
+    if (!workspace || !inTauriRuntime() || indexing) return;
+    setIndexing(true);
+    setIndexError(null);
+    setIndexFeedback(null);
+    try {
+      const stats = await invoke<IndexStats>("index_run", { root: workspace.root, reset });
+      setIndexFeedback(`索引完成：扫描 ${stats.scanned} 篇，新增 ${stats.added} 篇，更新 ${stats.updated} 篇，切片 ${stats.chunks} 个`);
+      onIndexed();
+      setDocReloadKey((k) => k + 1);
+      setTimeout(() => setIndexFeedback(null), 5000);
+    } catch (reason: unknown) {
+      setIndexError(String(reason));
+    } finally {
+      setIndexing(false);
+    }
+  };
+
+  const saveIncludeDirs = async (next: string[], reindexAfter = false): Promise<void> => {
+    if (!workspace || dirSaving) return;
+    setDirSaving(true);
+    setDirError(null);
+    try {
+      const config = await invoke<KbConfigInfo>("kb_config_set_include", { root: workspace.root, include: next });
+      setIncludeDirs(config.include);
+      if (reindexAfter) {
+        await runIndex();
+      }
+    } catch (reason: unknown) {
+      setDirError(String(reason));
+    } finally {
+      setDirSaving(false);
+    }
+  };
+
+  const addDir = (dir: string, reindexAfter = false): void => {
+    const cleaned = dir.trim().replace(/^\/+|\/+$/g, "");
+    if (!cleaned) return;
+    if (includeDirs.includes(cleaned)) {
+      setDirError(`目录 "${cleaned}" 已在索引列表中`);
+      return;
+    }
+    void saveIncludeDirs([...includeDirs, cleaned], reindexAfter);
+  };
+
+  const removeDir = (dir: string, reindexAfter = false): void => {
+    if (includeDirs.length <= 1) {
+      setDirError("至少需要保留一个索引目录");
+      return;
+    }
+    const next = includeDirs.filter((d) => d !== dir);
+    void saveIncludeDirs(next, reindexAfter);
+  };
+
+  if (page.status === "loading") return <div className="empty-state"><div className="hero-icon"><Icon name="file" size={24} /></div><h2>加载文档列表中…</h2></div>;
+  if (page.status === "error") return <div className="empty-state"><div className="hero-icon"><Icon name="file" size={24} /></div><h2>无法加载文档</h2><p>{page.message}</p></div>;
 
   const list = page.data;
   if (list.total === 0) {
-    return <div className="empty-state">
-      <div className="empty-icon">▤</div>
-      <h2>工作区尚未索引</h2>
-      <p>在终端运行 <code>llm-wiki index</code> 构建索引后，文档会显示在这里。</p>
-    </div>;
+    return (
+      <DocumentsEmptyState
+        workspace={workspace}
+        includeDirs={includeDirs}
+        defaultDirs={defaultDirs}
+        indexing={indexing}
+        dirSaving={dirSaving}
+        indexError={indexError}
+        dirError={dirError}
+        indexFeedback={indexFeedback}
+        onReindex={() => void runIndex()}
+        onAddDir={addDir}
+        onRemoveDir={removeDir}
+        onResetDirs={() => void saveIncludeDirs(defaultDirs, true)}
+        onOpenImports={onOpenImports}
+        onOpenSettings={onOpenSettings}
+      />
+    );
   }
 
   const selectedFile = list.files.find((f) => f.id === selectedId) ?? null;
 
-  return <div className="documents-page">
-    <Library files={list.files} total={list.total} selectedId={selectedId} onSelect={setSelectedId} />
-    <ReaderShell file={selectedFile} content={content} onAskAI={onAskAI} />
-  </div>;
+  return (
+    <div className="documents-page">
+      <Library
+        files={list.files}
+        total={list.total}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onReindex={() => void runIndex()}
+        indexing={indexing}
+        onOpenImports={onOpenImports}
+        includeDirs={includeDirs}
+        defaultDirs={defaultDirs}
+        dirSaving={dirSaving}
+        dirError={dirError}
+        onAddDir={addDir}
+        onRemoveDir={removeDir}
+        onResetDirs={() => void saveIncludeDirs(defaultDirs, true)}
+        indexFeedback={indexFeedback}
+      />
+      <ReaderShell file={selectedFile} content={content} onAskAI={onAskAI} />
+    </div>
+  );
 }
 
-interface LibraryProps {
+function Library({
+  files,
+  total,
+  selectedId,
+  onSelect,
+  onReindex,
+  indexing,
+  onOpenImports,
+}: {
   files: KbFileSummary[];
   total: number;
   selectedId: number | null;
   onSelect: (id: number) => void;
-}
+  onReindex: () => void;
+  indexing: boolean;
+  onOpenImports: () => void;
+  includeDirs: string[];
+  defaultDirs: string[];
+  dirSaving: boolean;
+  dirError: string | null;
+  onAddDir: (dir: string, reindex?: boolean) => void;
+  onRemoveDir: (dir: string, reindex?: boolean) => void;
+  onResetDirs: () => void;
+  indexFeedback: string | null;
+}): React.ReactElement {
+  const [filterQuery, setFilterQuery] = useState("");
 
-function Library({ files, total, selectedId, onSelect }: LibraryProps): React.ReactElement {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "recent" | "starred">("all");
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = q ? files.filter((f) => `${f.path} ${f.language}`.toLowerCase().includes(q)) : files.slice();
-    if (filter === "recent") list.sort((a, b) => toTimestamp(b.indexedAt) - toTimestamp(a.indexedAt));
-    return list;
-  }, [files, query, filter]);
-
-  const groups = useMemo(() => {
-    if (query.trim() || filter === "recent") {
-      return [{ label: filter === "recent" ? "最近更新" : "搜索结果", items: filtered }];
-    }
-    const map = new Map<string, KbFileSummary[]>();
-    for (const f of filtered) {
-      const label = parentLabel(f.path);
-      const arr = map.get(label) ?? [];
-      arr.push(f);
-      map.set(label, arr);
-    }
-    return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
-  }, [filtered, query, filter]);
+  const filteredFiles = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return files;
+    return files.filter((f) => f.path.toLowerCase().includes(q));
+  }, [files, filterQuery]);
 
   return (
     <aside className="library">
       <div className="library-head">
         <div className="section-title-row">
-          <div><span className="section-title">知识库</span><span className="section-count">{total}</span></div>
+          <div>
+            <span className="section-title">文档列表</span>
+            <span className="section-count">{total}</span>
+          </div>
           <div className="small-actions">
-            <button className="lib-icon-btn" title="筛选"><Icon name="filter" size={15} /></button>
-            <button className="lib-icon-btn" title="导入文档"><Icon name="plus" size={15} /></button>
+            <button
+              className="lib-icon-btn"
+              title="重新扫描索引"
+              disabled={indexing}
+              onClick={onReindex}
+            >
+              <Icon name="refresh" size={14} className={indexing ? "spin" : ""} />
+            </button>
+            <button
+              className="lib-icon-btn"
+              title="导入外部文件"
+              onClick={onOpenImports}
+            >
+              <Icon name="import" size={14} />
+            </button>
           </div>
         </div>
         <label className="library-search">
-          <Icon name="search" size={15} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="筛选当前知识库" />
+          <Icon name="search" size={14} />
+          <input
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            placeholder="搜索文档名称与路径"
+          />
         </label>
       </div>
-      <div className="library-filter">
-        {(["all", "recent", "starred"] as const).map((key) => (
-          <button key={key} className={filter === key ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(key)}>
-            {key === "all" ? "全部" : key === "recent" ? "最近" : "收藏"}
-          </button>
-        ))}
-        <button className="filter-chip sort" title="排序"><Icon name="sort" size={14} /></button>
-      </div>
+
       <div className="doc-scroll">
-        {filter === "starred"
-          ? <div className="doc-empty">还没有收藏的文档<br />收藏后可在此快速访问</div>
-          : filtered.length === 0
-            ? <div className="doc-empty">没有找到匹配的文档<br />换一个关键词试试</div>
-            : groups.map((g) => (
-              <div key={g.label}>
-                <div className="doc-group-label">{g.label}</div>
-                {g.items.map((f) => (
-                  <article key={f.id} className={f.id === selectedId ? "doc-item active" : "doc-item"} onClick={() => onSelect(f.id)}>
-                    <div className="doc-icon"><Icon name="file" size={16} /></div>
-                    <div className="doc-copy">
-                      <div className="doc-title">{docName(f.path)}</div>
-                      <div className="doc-path">{f.path}</div>
-                      <div className="doc-meta">
-                        <span>{f.chunkCount} 个切片</span><span className="meta-dot" />
-                        <span>{relativeTime(f.indexedAt)}</span>
-                      </div>
-                    </div>
-                    <button className="doc-menu" aria-label="更多操作" onClick={(e) => e.stopPropagation()}><Icon name="more" size={15} /></button>
-                  </article>
-                ))}
+        {filteredFiles.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "30px 14px", color: "var(--text-muted)", fontSize: "12px" }}>
+            无匹配文档
+          </div>
+        ) : (
+          filteredFiles.map((file) => (
+            <article
+              key={file.id}
+              className={file.id === selectedId ? "doc-item active" : "doc-item"}
+              onClick={() => onSelect(file.id)}
+            >
+              <div className="doc-icon">
+                <Icon name="file" size={14} />
               </div>
-            ))}
+              <div className="doc-copy">
+                <div className="doc-title">{docName(file.path)}</div>
+                <div className="doc-path">{file.path}</div>
+                <div className="doc-meta">
+                  <span>{(file.size / 1024).toFixed(1)} KB</span>
+                  <span className="meta-dot" />
+                  <span>{file.chunkCount} 切片</span>
+                </div>
+              </div>
+            </article>
+          ))
+        )}
       </div>
     </aside>
   );
 }
 
-interface ReaderShellProps {
+function ReaderShell({
+  file,
+  content,
+  onAskAI,
+}: {
   file: KbFileSummary | null;
   content: LoadState<KbFileContent>;
   onAskAI: () => void;
-}
+}): React.ReactElement {
+  const [viewMode, setViewMode] = useState<"render" | "source">("render");
+  const [copied, setCopied] = useState(false);
 
-function ReaderShell({ file, content, onAskAI }: ReaderShellProps): React.ReactElement {
-  const [view, setView] = useState<"preview" | "source">("preview");
-  const [activeHeading, setActiveHeading] = useState("");
-  const [toast, setToast] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const rawMarkdown = content.status === "ready" ? content.data.content : "";
+  const { title: fmTitle, subtitle: fmSubtitle, body: cleanBody } = useMemo(
+    () => splitFrontMatter(rawMarkdown),
+    [rawMarkdown],
+  );
+  const displayTitle = fmTitle || (file ? docName(file.path) : "未命名文档");
+  const headings = useMemo(() => extractHeadings(cleanBody), [cleanBody]);
 
-  const markdown = content.status === "ready" ? content.data.content : "";
-  const { title: liftedTitle, subtitle, body } = useMemo(() => splitFrontMatter(markdown), [markdown]);
-  const headings = useMemo(() => extractHeadings(body), [body]);
-
-  // Reset to the first heading whenever the document (or view) changes.
-  useEffect(() => {
-    const first = headings[0];
-    setActiveHeading(first ? first.slug : "");
-  }, [headings]);
-
-  // Scroll-spy: highlight the TOC entry for the heading nearest the top.
-  useEffect(() => {
-    const el = scrollRef.current;
-    const first = headings[0];
-    if (!el || !first || view !== "preview") return;
-    const onScroll = (): void => {
-      let current = first.slug;
-      for (const h of headings) {
-        const node = el.querySelector(`[id="${h.slug}"]`) as HTMLElement | null;
-        if (node && node.getBoundingClientRect().top < 180) current = h.slug;
-      }
-      setActiveHeading(current);
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [headings, view]);
-
-  const scrollToHeading = (slug: string): void => {
-    const el = scrollRef.current;
-    const node = el?.querySelector(`[id="${slug}"]`) as HTMLElement | null;
-    node?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const copyContent = async (): Promise<void> => {
+    if (!rawMarkdown) return;
+    try {
+      await navigator.clipboard.writeText(rawMarkdown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // ignore
+    }
   };
 
-  const copyLink = async (): Promise<void> => {
-    if (!file) return;
-    try { await navigator.clipboard.writeText(`llm-wiki://${file.path}`); } catch { /* clipboard unavailable */ }
-    setToast(true);
-    window.setTimeout(() => setToast(false), 1500);
-  };
-
-  const ready = content.status === "ready";
-  const segments = ready ? content.data.path.split("/").filter(Boolean) : [];
-  const articleTitle = ready ? (liftedTitle ?? docName(content.data.path)) : "";
+  if (!file) {
+    return (
+      <section className="reader-shell">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", textAlign: "center" }}>
+          <div className="hero-icon"><Icon name="file" size={24} /></div>
+          <h3 style={{ margin: "0 0 6px", color: "var(--text-main)", fontSize: "16px" }}>选择左侧文档查看详情</h3>
+          <p style={{ margin: 0, fontSize: "13px" }}>支持 Markdown 实时渲染与结构化大纲导航</p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="reader-shell">
       <div className="reader-toolbar">
         <div className="toolbar-breadcrumb">
-          {segments.length === 0
-            ? <span className="current">未选择文档</span>
-            : segments.map((seg, i) => (
-              <span key={i} className="crumb">
-                {i > 0 && <em>/</em>}
-                <span className={i === segments.length - 1 ? "current" : ""}>{seg}</span>
-              </span>
-            ))}
+          <span className="crumb">
+            <Icon name="folder" size={13} />
+            <span>{parentLabel(file.path)}</span>
+          </span>
+          <span className="crumb">
+            <em>/</em>
+            <span className="current">{docName(file.path)}</span>
+          </span>
         </div>
         <div className="toolbar-spacer" />
         <div className="segmented">
-          <button className={view === "preview" ? "active" : ""} onClick={() => setView("preview")}>预览</button>
-          <button className={view === "source" ? "active" : ""} onClick={() => setView("source")}>源码</button>
+          <button className={viewMode === "render" ? "active" : ""} onClick={() => setViewMode("render")}>
+            渲染视图
+          </button>
+          <button className={viewMode === "source" ? "active" : ""} onClick={() => setViewMode("source")}>
+            源码视图
+          </button>
         </div>
-        <button className="tool-button" onClick={() => void copyLink()}><Icon name="link" size={14} /><span>复制链接</span></button>
-        <button className="tool-button primary" onClick={onAskAI}><Icon name="spark" size={14} /><span>询问 AI</span></button>
-        <button className="lib-icon-btn" aria-label="更多操作"><Icon name="more" size={17} /></button>
+        <button className="tool-button" onClick={() => void copyContent()}>
+          <Icon name={copied ? "check" : "copy"} size={13} />
+          <span>{copied ? "已复制" : "复制"}</span>
+        </button>
+        <button className="tool-button primary" onClick={onAskAI}>
+          <Icon name="spark" size={13} />
+          <span>向 AI 提问本文档</span>
+        </button>
       </div>
 
-      <div className="reader-scroll" ref={scrollRef}>
-        {file === null
-          ? <div className="reader-placeholder"><div className="reader-placeholder-icon">▤</div><h3>选择左侧文档</h3><p>从知识库中选一篇文档开始阅读。</p></div>
-          : content.status === "loading"
-            ? <div className="reader-placeholder"><h3>加载中…</h3></div>
-            : content.status === "error"
-              ? <div className="reader-placeholder"><h3>无法加载文档</h3><p>{content.message}</p></div>
-              : <div className="reader-layout">
-                <article className="article">
-                  <header className="article-header">
-                    <div className="eyebrow-doc"><span className="line" /><span>{content.data.language === "markdown" ? "Markdown" : content.data.language} 文档</span></div>
-                    <h1>{articleTitle}</h1>
-                    {subtitle && <p className="article-subtitle">{subtitle}</p>}
-                    <div className="article-meta">
-                      <span className="tag blue">{content.data.language}</span>
-                      <span className="tag">{content.data.chunks.length} 个切片</span>
-                      <span className="updated">更新于 {relativeTime(file.indexedAt)}</span>
-                    </div>
-                  </header>
-                  {view === "preview"
-                    ? <ArticleMarkdown markdown={body} />
-                    : <div className="source-view"><pre>{markdown}</pre></div>}
-                </article>
-                {view === "preview" && headings.length > 0 && (
-                  <aside className="toc">
-                    <div className="toc-title"><span>本文目录</span><Icon name="panel" size={14} /></div>
-                    <nav className="toc-list">
-                      {headings.map((h) => (
-                        <a
-                          key={h.slug}
-                          href={`#${h.slug}`}
-                          className={[activeHeading === h.slug ? "active" : "", h.level === 3 ? "sub" : ""].join(" ").trim()}
-                          onClick={(e) => { e.preventDefault(); scrollToHeading(h.slug); }}
-                        >
-                          {h.text}
-                        </a>
-                      ))}
-                    </nav>
-                  </aside>
-                )}
-              </div>}
+      <div className="reader-scroll">
+        {content.status === "loading" ? (
+          <div style={{ textAlign: "center", padding: "60px", color: "var(--text-muted)", fontSize: "13px" }}>
+            正在读取文档内容…
+          </div>
+        ) : content.status === "error" ? (
+          <div style={{ textAlign: "center", padding: "60px", color: "var(--danger)", fontSize: "13px" }}>
+            {content.message}
+          </div>
+        ) : viewMode === "source" ? (
+          <div style={{ padding: "24px", maxWidth: "960px", margin: "0 auto" }}>
+            <pre style={{ margin: 0, padding: "20px", borderRadius: "12px", background: "#1e293b", color: "#e2e8f0", fontFamily: "var(--app-font-mono)", fontSize: "13px", lineHeight: "1.65", overflow: "auto", whiteSpace: "pre-wrap" }}>
+              {rawMarkdown}
+            </pre>
+          </div>
+        ) : (
+          <div className="reader-layout">
+            <article className="article">
+              <header className="article-header">
+                <div className="eyebrow-doc">
+                  <Icon name="folder" size={12} />
+                  <span>{parentLabel(file.path)}</span>
+                </div>
+                <h1>{displayTitle}</h1>
+                {fmSubtitle && <p className="article-subtitle">{fmSubtitle}</p>}
+                <div className="article-meta">
+                  <span className="tag blue">{file.language.toUpperCase()}</span>
+                  <span className="tag">{(file.size / 1024).toFixed(1)} KB</span>
+                  <span className="tag">{file.chunkCount} 切片</span>
+                  <span style={{ color: "var(--text-muted)", fontSize: "11px", marginLeft: "auto" }}>
+                    路径：{file.path}
+                  </span>
+                </div>
+              </header>
+
+              <div className="article-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1({ children, ...props }) {
+                      const text = extractText(children);
+                      return <h1 id={slugify(text)} {...props}>{children}</h1>;
+                    },
+                    h2({ children, ...props }) {
+                      const text = extractText(children);
+                      return <h2 id={slugify(text)} {...props}>{children}</h2>;
+                    },
+                    h3({ children, ...props }) {
+                      const text = extractText(children);
+                      return <h3 id={slugify(text)} {...props}>{children}</h3>;
+                    },
+                  }}
+                >
+                  {cleanBody}
+                </ReactMarkdown>
+              </div>
+            </article>
+
+            {headings.length > 0 && (
+              <aside className="toc">
+                <div className="toc-title">目录导航</div>
+                <nav className="toc-list">
+                  {headings.map((h, i) => (
+                    <a key={`${h.slug}-${i}`} href={`#${h.slug}`} className={h.level === 3 ? "sub" : ""}>
+                      {h.text}
+                    </a>
+                  ))}
+                </nav>
+              </aside>
+            )}
+          </div>
+        )}
       </div>
-      <div className={toast ? "toast show" : "toast"} role="status">已复制文档链接</div>
     </section>
   );
 }
 
-function ArticleMarkdown({ markdown }: { markdown: string }): React.ReactElement {
-  return (
-    <div className="article-body">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          h1: ({ children }) => <h1 id={slugify(extractText(children))}>{children}</h1>,
-          h2: ({ children }) => <h2 id={slugify(extractText(children))}>{children}</h2>,
-          h3: ({ children }) => <h3 id={slugify(extractText(children))}>{children}</h3>,
-        }}
-      >
-        {markdown}
-      </ReactMarkdown>
-    </div>
-  );
-}
-
+// --- Imports View (Full Desktop 2-column App Design) ---
 function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | null; onImported: () => void }): React.ReactElement {
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1669,15 +1872,12 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
     setSelected(name);
     setContent(null);
     setError(null);
-    // Default target path: wiki/<filename without extension>.md
     const stem = name.replace(/\.[^.]+$/, "");
     setTargetPath(`wiki/${stem}.md`);
     try {
-      // Try direct text read first.
       const text = await invoke<string>("attachment_read", { root: workspace.root, name });
       setContent(text);
     } catch {
-      // If that fails and the file is extractable (PDF/DOCX), try extraction.
       if (isExtractable) {
         try {
           const extracted = await invoke<string>("attachment_extract", { root: workspace.root, name });
@@ -1686,7 +1886,6 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
           setError(String(reason));
         }
       }
-      // Otherwise leave content null — the UI shows "unsupported".
     }
   };
 
@@ -1712,53 +1911,107 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
   };
 
   if (!workspace) {
-    return <div className="empty-state"><div className="empty-icon">↥</div><h2>导入知识文档</h2><p className="muted">请先选择一个工作区。</p></div>;
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon"><Icon name="import" size={28} /></div>
+          <h2>导入外部知识文档</h2>
+          <p className="doc-empty-desc">请先在左上角选择或连接一个本地工作区。</p>
+        </div>
+      </div>
+    );
   }
 
-  return <div className="split-panel">
-    <div className="file-tree">
-      <strong>已导入文件（{attachments.length}）</strong>
-      <button className="primary-button" style={{ margin: "0.5em 0", width: "calc(100% - 1em)" }} disabled={busy} onClick={() => void pickAndImport()}>
-        {busy ? "导入中…" : "＋ 选择文件"}
-      </button>
-      {attachments.length === 0
-        ? <p className="muted" style={{ padding: "0 0.5em" }}>暂无已导入文件。选择一个文本文件开始。</p>
-        : attachments.map((att) => (
-          <button
-            className={att.name === selected ? "file-item selected" : "file-item"}
-            key={att.name}
-            onClick={() => void loadContent(att.name, att.isExtractable)}
-          >
-            ▤ {att.name}
-            <small>{att.isText ? `${(att.size / 1024).toFixed(1)}KB · 文本` : att.isExtractable ? `${(att.size / 1024).toFixed(1)}KB · 可提取` : `${(att.size / 1024).toFixed(1)}KB · 二进制`}</small>
+  return (
+    <div className="split-panel">
+      <div className="file-tree">
+        <div className="file-tree-header">
+          <strong>已导入附件 ({attachments.length})</strong>
+        </div>
+        <div className="file-tree-actions">
+          <button className="primary-button" style={{ width: "100%" }} disabled={busy} onClick={() => void pickAndImport()}>
+            <Icon name="plus" size={14} />
+            {busy ? "正在导入…" : "导入外部文件"}
           </button>
-        ))}
+        </div>
+
+        {attachments.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "12px", textAlign: "center", padding: "24px 8px" }}>
+            暂无已导入文件。点击上方按钮选择 Markdown、PDF、Word 或文本文件开始。
+          </p>
+        ) : (
+          attachments.map((att) => (
+            <button
+              className={att.name === selected ? "file-item selected" : "file-item"}
+              key={att.name}
+              onClick={() => void loadContent(att.name, att.isExtractable)}
+            >
+              <Icon name="file" size={15} />
+              <div className="file-item-copy">
+                <div className="file-item-name">{att.name}</div>
+                <div className="file-item-meta">
+                  {(att.size / 1024).toFixed(1)} KB · {att.isText ? "纯文本" : att.isExtractable ? "自动提取" : "二进制"}
+                </div>
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+
+      <article className="document-reader">
+        {error && <div className="doc-status-banner error">操作错误：{error}</div>}
+        {selected === null ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
+            <div className="hero-icon"><Icon name="import" size={28} /></div>
+            <h2 style={{ fontSize: "18px", color: "var(--text-main)", margin: "0 0 8px" }}>选择左侧已导入文件</h2>
+            <p style={{ maxWidth: "460px", margin: "0 auto", fontSize: "13px", lineHeight: "1.6" }}>
+              导入的文件将存放于 <code>attachments/</code> 目录。支持将提取的内容一键转换为草稿，安全写入知识库。
+            </p>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+              <span className="eyebrow-doc">{selected}</span>
+            </div>
+            <h2>创建草稿并写入 Wiki</h2>
+            {content === null ? (
+              <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>正在提取文档文本…</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "16px" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12.5px", fontWeight: 600 }}>
+                  目标写入路径 (相对于工作区根目录)
+                  <input
+                    value={targetPath}
+                    onChange={(e) => setTargetPath(e.target.value)}
+                    placeholder="wiki/document.md"
+                    style={{ padding: "9px 12px", borderRadius: "8px", border: "1px solid var(--border-main)", fontSize: "13px" }}
+                  />
+                </label>
+                <div>
+                  <button className="primary-button" disabled={!targetPath.trim()} onClick={() => void createDraft()}>
+                    <Icon name="draft" size={14} />
+                    生成写入草稿
+                  </button>
+                  <span style={{ marginLeft: "12px", color: "var(--text-muted)", fontSize: "11.5px" }}>
+                    草稿创建后可在「写入草稿」中二次确认，保障原子写入安全。
+                  </span>
+                </div>
+                <div style={{ marginTop: "16px" }}>
+                  <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 8px" }}>提取内容预览</h3>
+                  <pre style={{ margin: 0, padding: "16px", borderRadius: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", maxHeight: "420px", overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "var(--app-font-mono)", fontSize: "12.5px", lineHeight: "1.6" }}>
+                    {content.slice(0, 5000)}{content.length > 5000 ? "\n\n…（预览截断，完整内容将完整写入草稿）" : ""}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </article>
     </div>
-    <article className="document-reader">
-      {error && <p style={{ color: "var(--danger, #c0392b)" }}>错误：{error}</p>}
-      {selected === null
-        ? <><h2>导入知识文档</h2><p className="muted">选择外部文件导入到 attachments/。文本文件直接预览，PDF/DOCX 自动提取文本。</p></>
-        : <>
-          <span className="eyebrow">{selected}</span>
-          <h2>创建草稿写入 wiki</h2>
-          {content === null
-            ? <p className="muted">正在提取文本…</p>
-            : <>
-              <label>目标路径
-                <input value={targetPath} onChange={(e) => setTargetPath(e.target.value)} placeholder="wiki/new-doc.md" style={{ width: "100%", margin: "0.25em 0", padding: "0.4em" }} />
-              </label>
-              <button className="primary-button" style={{ margin: "0.5em 0" }} disabled={!targetPath.trim()} onClick={() => void createDraft()}>创建草稿</button>
-              <p className="muted" style={{ fontSize: "0.85em" }}>草稿创建后可在「写入草稿」菜单确认写入。写入时将自动创建备份。</p>
-              <h3 style={{ marginTop: "1em" }}>内容预览</h3>
-              <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0, padding: "0.75em", background: "var(--surface-2, #f5f5f5)", borderRadius: "6px", maxHeight: "400px", overflow: "auto" }}>
-                {content.slice(0, 5000)}{content.length > 5000 ? "\n\n…（预览截断，完整内容将写入草稿）" : ""}
-              </pre>
-            </>}
-        </>}
-    </article>
-  </div>;
+  );
 }
 
+// --- Drafts View (Full Desktop 2-column Review Layout) ---
 const OPERATION_LABELS: Record<string, string> = {
   create: "新建文档",
   append: "追加内容",
@@ -1772,7 +2025,6 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Load the draft list whenever the workspace or refreshKey changes.
   useEffect(() => {
     if (!workspace || !inTauriRuntime()) {
       setDrafts({ status: "error", message: "请先选择一个工作区" });
@@ -1781,14 +2033,26 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     let cancelled = false;
     setDrafts({ status: "loading" });
     void invoke<Draft[]>("draft_list", { root: workspace.root })
-      .then((data) => { if (!cancelled) { setDrafts({ status: "ready", data }); setSelectedId(null); } })
-      .catch((reason: unknown) => { if (!cancelled) setDrafts({ status: "error", message: String(reason) }); });
-    return () => { cancelled = true; };
+      .then((data) => {
+        if (!cancelled) {
+          setDrafts({ status: "ready", data });
+          setSelectedId(null);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setDrafts({ status: "error", message: String(reason) });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [workspace, refreshKey]);
 
   const selectedDraft = drafts.status === "ready" ? drafts.data.find((d) => d.draftId === selectedId) ?? null : null;
 
-  const refresh = (): void => { setActionError(null); setRefreshKey((k) => k + 1); };
+  const refresh = (): void => {
+    setActionError(null);
+    setRefreshKey((k) => k + 1);
+  };
 
   const applyDraft = async (draftId: string): Promise<void> => {
     if (!workspace) return;
@@ -1812,83 +2076,127 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     }
   };
 
-  if (drafts.status === "loading") return <div className="empty-state"><div className="empty-icon">◒</div><h2>加载草稿列表…</h2></div>;
-  if (drafts.status === "error") return <div className="empty-state"><div className="empty-icon">◒</div><h2>无法加载草稿</h2><p>{drafts.message}</p></div>;
+  if (drafts.status === "loading") return <div className="empty-state"><div className="hero-icon"><Icon name="draft" size={24} /></div><h2>加载草稿列表中…</h2></div>;
+  if (drafts.status === "error") return <div className="empty-state"><div className="hero-icon"><Icon name="draft" size={24} /></div><h2>无法加载草稿</h2><p>{drafts.message}</p></div>;
 
   const list = drafts.data;
   const pending = list.filter((d) => d.status === "pending");
 
   if (list.length === 0) {
-    return <div className="empty-state">
-      <div className="empty-icon">◒</div>
-      <h2>暂无草稿</h2>
-      <p className="muted">Pi 生成的写入草稿会出现在这里，等待你确认后再写入 wiki。目前没有草稿。</p>
-    </div>;
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon"><Icon name="draft" size={28} /></div>
+          <h2>暂无待确认草稿</h2>
+          <p className="doc-empty-desc">
+            由 Pi 智能体生成或由导入文件创建的写入草稿会在此处列出，供您人工确认后原子写入 Wiki。
+          </p>
+        </div>
+      </div>
+    );
   }
 
-  return <div className="split-panel">
-    <div className="file-tree">
-      <strong>草稿（{pending.length} 待确认 · {list.length} 总计）</strong>
-      {list.map((draft) => (
-        <button
-          className={draft.draftId === selectedId ? "file-item selected" : "file-item"}
-          key={draft.draftId}
-          onClick={() => { setSelectedId(draft.draftId); setActionError(null); }}
-        >
-          ▒ {draft.targetPath}
-          <small>{OPERATION_LABELS[draft.operationType] ?? draft.operationType} · {draft.status}</small>
-        </button>
-      ))}
-    </div>
-    <article className="document-reader">
-      {actionError && <p style={{ color: "var(--danger, #c0392b)" }}>操作失败：{actionError}</p>}
-      {selectedDraft === null
-        ? <><h2>选择左侧草稿</h2><p className="muted">共 {pending.length} 个待确认草稿。</p></>
-        : <>
-          <span className="eyebrow">{OPERATION_LABELS[selectedDraft.operationType] ?? selectedDraft.operationType}</span>
-          <h2>{selectedDraft.targetPath}</h2>
-          <p className="muted">
-            状态：{selectedDraft.status} · 创建者：{selectedDraft.createdBy}
-            {selectedDraft.baseDocumentHash && ` · 基准哈希：${selectedDraft.baseDocumentHash.slice(0, 12)}…`}
-            {selectedDraft.sourceCitations.length > 0 && ` · 引用 ${selectedDraft.sourceCitations.length} 个来源`}
-          </p>
-          {selectedDraft.status === "pending"
-            ? <div style={{ display: "flex", gap: "0.75em", margin: "1em 0" }}>
-              <button className="primary-button" onClick={() => void applyDraft(selectedDraft.draftId)}>确认写入</button>
-              <button className="primary-button" style={{ opacity: 0.6 }} onClick={() => void rejectDraft(selectedDraft.draftId)}>拒绝</button>
+  return (
+    <div className="split-panel">
+      <div className="file-tree">
+        <div className="file-tree-header">
+          <strong>写入草稿 ({pending.length} 待确认 / {list.length} 总数)</strong>
+        </div>
+        {list.map((draft) => (
+          <button
+            className={draft.draftId === selectedId ? "file-item selected" : "file-item"}
+            key={draft.draftId}
+            onClick={() => {
+              setSelectedId(draft.draftId);
+              setActionError(null);
+            }}
+          >
+            <Icon name="draft" size={15} />
+            <div className="file-item-copy">
+              <div className="file-item-name">{draft.targetPath}</div>
+              <div className="file-item-meta">
+                <span className={`draft-badge ${draft.status}`}>{draft.status === "pending" ? "待审核" : draft.status === "applied" ? "已写入" : "已拒绝"}</span>
+                {" · "}{OPERATION_LABELS[draft.operationType] ?? draft.operationType}
+              </div>
             </div>
-            : <p className="muted" style={{ fontStyle: "italic" }}>此草稿已处理（{selectedDraft.status}）。</p>}
-          <h3 style={{ marginTop: "1em" }}>生成内容预览</h3>
-          <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", margin: 0, padding: "0.75em", background: "var(--surface-2, #f5f5f5)", borderRadius: "6px" }}>
-            {selectedDraft.generatedContent}
-          </pre>
-        </>}
-    </article>
-  </div>;
+          </button>
+        ))}
+      </div>
+
+      <article className="document-reader">
+        {actionError && <div className="doc-status-banner error">操作失败：{actionError}</div>}
+        {selectedDraft === null ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
+            <div className="hero-icon"><Icon name="draft" size={28} /></div>
+            <h2 style={{ fontSize: "18px", color: "var(--text-main)", margin: "0 0 8px" }}>选择左侧草稿进行审查</h2>
+            <p style={{ fontSize: "13px" }}>当前有 {pending.length} 个待确认写入草稿。</p>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+              <span className="eyebrow-doc">{OPERATION_LABELS[selectedDraft.operationType] ?? selectedDraft.operationType}</span>
+              <span className={`draft-badge ${selectedDraft.status}`}>
+                {selectedDraft.status === "pending" ? "待审核" : selectedDraft.status === "applied" ? "已生效" : "已拒绝"}
+              </span>
+            </div>
+            <h2>{selectedDraft.targetPath}</h2>
+            <p style={{ color: "var(--text-muted)", fontSize: "12.5px", margin: "0 0 18px" }}>
+              创建者：{selectedDraft.createdBy}
+              {selectedDraft.baseDocumentHash && ` · 基准哈希：${selectedDraft.baseDocumentHash.slice(0, 10)}…`}
+              {selectedDraft.sourceCitations.length > 0 && ` · 引用 ${selectedDraft.sourceCitations.length} 处知识来源`}
+            </p>
+
+            {selectedDraft.status === "pending" ? (
+              <div style={{ display: "flex", gap: "10px", margin: "16px 0" }}>
+                <button className="primary-button" onClick={() => void applyDraft(selectedDraft.draftId)}>
+                  <Icon name="check" size={14} />
+                  确认写入知识库
+                </button>
+                <button className="tool-button" onClick={() => void rejectDraft(selectedDraft.draftId)}>
+                  <Icon name="close" size={14} />
+                  拒绝草稿
+                </button>
+              </div>
+            ) : (
+              <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--bg-surface-muted)", color: "var(--text-secondary)", fontSize: "12px", margin: "14px 0" }}>
+                该草稿已完成处理 ({selectedDraft.status})。
+              </div>
+            )}
+
+            <div style={{ marginTop: "20px" }}>
+              <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 8px" }}>生成内容预览</h3>
+              <pre style={{ margin: 0, padding: "16px", borderRadius: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", maxHeight: "480px", overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "var(--app-font-mono)", fontSize: "12.5px", lineHeight: "1.6" }}>
+                {selectedDraft.generatedContent}
+              </pre>
+            </div>
+          </div>
+        )}
+      </article>
+    </div>
+  );
 }
 
-interface IndexStats {
-  scanned: number;
-  added: number;
-  updated: number;
-  skipped: number;
-  deleted: number;
-  chunks: number;
-  vectorEnabled: boolean;
-}
-
+// --- Tasks View (Full Desktop System Monitor) ---
 function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; onIndexed: () => void }): React.ReactElement {
   const [indexing, setIndexing] = useState(false);
   const [lastResult, setLastResult] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stats, setStats] = useState<KbStats | null>(null);
+
+  useEffect(() => {
+    if (!workspace || !inTauriRuntime()) return;
+    void invoke<KbStats>("kb_stats", { root: workspace.root })
+      .then(setStats)
+      .catch(() => {});
+  }, [workspace, lastResult]);
 
   const runIndex = async (): Promise<void> => {
     if (!workspace || !inTauriRuntime() || indexing) return;
     setIndexing(true);
     setError(null);
     try {
-      const stats = await invoke<IndexStats>("index_run", { root: workspace.root });
-      setLastResult(stats);
+      const result = await invoke<IndexStats>("index_run", { root: workspace.root });
+      setLastResult(result);
       onIndexed();
     } catch (reason: unknown) {
       setError(String(reason));
@@ -1897,26 +2205,76 @@ function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; 
     }
   };
 
-  return <div className="task-list">
-    <div className="task-row" style={{ alignItems: "flex-start" }}>
-      <span className="task-bullet" />
-      <div style={{ flex: 1 }}>
-        <strong>索引工作区</strong>
-        <p>扫描 <code>wiki/</code> 目录并构建 FTS5 全文索引。支持增量更新(仅处理变更文件)。</p>
-        {error && <p style={{ color: "var(--danger, #c0392b)" }}>错误：{error}</p>}
-        {lastResult && !indexing && <p className="muted" style={{ marginTop: "0.5em" }}>
-          上次结果：扫描 {lastResult.scanned} · 新增 {lastResult.added} · 更新 {lastResult.updated} · 跳过 {lastResult.skipped} · 删除 {lastResult.deleted} · 切片 {lastResult.chunks}
-        </p>}
+  return (
+    <div className="task-list">
+      <div className="task-page-header">
+        <h1>后台任务与系统健康</h1>
+        <p>监控工作区全文索引、知识库拓扑与底层数据库运行状态。</p>
       </div>
-      <button
-        className="primary-button"
-        disabled={!workspace || indexing}
-        onClick={() => void runIndex()}
-        style={{ whiteSpace: "nowrap" }}
-      >
-        {indexing ? "索引中…" : "重新索引"}
-      </button>
+
+      <div className="task-card">
+        <div className="task-card-header">
+          <strong>工作区全文索引 (FTS5 Indexer)</strong>
+          <button
+            className="primary-button"
+            disabled={!workspace || indexing}
+            onClick={() => void runIndex()}
+          >
+            <Icon name="refresh" size={14} className={indexing ? "spin" : ""} />
+            {indexing ? "正在构建索引…" : "立即重新索引"}
+          </button>
+        </div>
+        <p>扫描配置目录下的 Markdown 与文本文件，解析层级章节并维护 BM25 全文检索索引与切片。</p>
+
+        {error && <div className="doc-status-banner error" style={{ marginTop: "12px" }}>索引错误：{error}</div>}
+
+        <div className="task-stats-grid">
+          <div className="task-stat-item">
+            <span>索引状态</span>
+            <strong>{stats?.tablesOk ? "就绪" : "未建立"}</strong>
+          </div>
+          <div className="task-stat-item">
+            <span>收录文档</span>
+            <strong>{stats?.files ?? 0} 篇</strong>
+          </div>
+          <div className="task-stat-item">
+            <span>文本切片 (Chunks)</span>
+            <strong>{stats?.chunks ?? 0} 条</strong>
+          </div>
+          <div className="task-stat-item">
+            <span>FTS5 记录数</span>
+            <strong>{stats?.ftsRecords ?? 0} 条</strong>
+          </div>
+        </div>
+
+        {lastResult && (
+          <div style={{ marginTop: "14px", padding: "10px 14px", borderRadius: "8px", background: "var(--bg-surface-subtle)", fontSize: "12px", color: "var(--text-secondary)" }}>
+            上次扫描结果：扫描 {lastResult.scanned} 篇 · 新增 {lastResult.added} 篇 · 更新 {lastResult.updated} 篇 · 跳过 {lastResult.skipped} 篇 · 切片 {lastResult.chunks} 个
+          </div>
+        )}
+      </div>
+
+      <div className="task-card">
+        <div className="task-card-header">
+          <strong>存储引擎与并发安全性 (SQLite WAL)</strong>
+          <span className="draft-badge applied">正常运行</span>
+        </div>
+        <p>采用 SQLite WAL (Write-Ahead Logging) 模式，保障桌面端多任务、AI 问答并发检索及文件写入事务的一致性。</p>
+        <div className="task-stats-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <div className="task-stat-item">
+            <span>模式</span>
+            <strong>WAL Journal</strong>
+          </div>
+          <div className="task-stat-item">
+            <span>检索协议</span>
+            <strong>SQLite FTS5 BM25</strong>
+          </div>
+          <div className="task-stat-item">
+            <span>安全写入校验</span>
+            <strong>expectedHash 开启</strong>
+          </div>
+        </div>
+      </div>
     </div>
-    {!workspace && <p className="muted" style={{ padding: "0 1em" }}>请先选择一个工作区。</p>}
-  </div>;
+  );
 }

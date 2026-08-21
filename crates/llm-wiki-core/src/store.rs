@@ -274,6 +274,21 @@ pub struct SearchHit {
     pub bm25: f64,
 }
 
+/// Metadata for an AI chat session. Mirrors the `chat_sessions` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSessionRecord {
+    pub id: String,
+    pub workspace_id: String,
+    pub title: String,
+    pub model_provider: String,
+    pub model_id: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived: bool,
+    pub pinned: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -928,6 +943,146 @@ impl SqliteStore {
             rusqlite::params![now, draft_id],
         )?;
         Ok(())
+    }
+
+    // -- chat sessions -------------------------------------------------------
+
+    /// Lists chat sessions, optionally filtered by workspace_id.
+    pub fn list_chat_sessions(&self, workspace_id: Option<&str>) -> Result<Vec<ChatSessionRecord>, CoreError> {
+        let Some(conn) = self.connect()? else {
+            return Ok(vec![]);
+        };
+        if !Self::table_exists(&conn, "chat_sessions") {
+            return Ok(vec![]);
+        }
+        let (sql, params): (String, Vec<Box<dyn rusqlite::ToSql>>) = match workspace_id {
+            Some(wid) => (
+                "SELECT id, workspace_id, title, model_provider, model_id, created_at, updated_at, archived, pinned
+                   FROM chat_sessions WHERE workspace_id = ?1 ORDER BY pinned DESC, updated_at DESC".into(),
+                vec![Box::new(wid.to_string())],
+            ),
+            None => (
+                "SELECT id, workspace_id, title, model_provider, model_id, created_at, updated_at, archived, pinned
+                   FROM chat_sessions ORDER BY pinned DESC, updated_at DESC".into(),
+                vec![],
+            ),
+        };
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql).map_err(|e| CoreError::Storage(e.to_string()))?;
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                let archived_int: i64 = row.get("archived")?;
+                let pinned_int: i64 = row.get("pinned")?;
+                Ok(ChatSessionRecord {
+                    id: row.get("id")?,
+                    workspace_id: row.get("workspace_id")?,
+                    title: row.get("title")?,
+                    model_provider: row.get("model_provider")?,
+                    model_id: row.get("model_id")?,
+                    created_at: row.get("created_at")?,
+                    updated_at: row.get("updated_at")?,
+                    archived: archived_int != 0,
+                    pinned: pinned_int != 0,
+                })
+            })
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| CoreError::Storage(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Fetches a chat session by ID.
+    pub fn get_chat_session(&self, id: &str) -> Result<Option<ChatSessionRecord>, CoreError> {
+        let Some(conn) = self.connect()? else {
+            return Ok(None);
+        };
+        if !Self::table_exists(&conn, "chat_sessions") {
+            return Ok(None);
+        }
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, workspace_id, title, model_provider, model_id, created_at, updated_at, archived, pinned
+                   FROM chat_sessions WHERE id = ?1",
+            )
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        let result = stmt
+            .query_row([id], |row| {
+                let archived_int: i64 = row.get("archived")?;
+                let pinned_int: i64 = row.get("pinned")?;
+                Ok(ChatSessionRecord {
+                    id: row.get("id")?,
+                    workspace_id: row.get("workspace_id")?,
+                    title: row.get("title")?,
+                    model_provider: row.get("model_provider")?,
+                    model_id: row.get("model_id")?,
+                    created_at: row.get("created_at")?,
+                    updated_at: row.get("updated_at")?,
+                    archived: archived_int != 0,
+                    pinned: pinned_int != 0,
+                })
+            })
+            .optional()
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        Ok(result)
+    }
+
+    /// Creates or updates a chat session metadata record.
+    pub fn upsert_chat_session(&self, session: &ChatSessionRecord) -> Result<(), CoreError> {
+        let conn = self.connect_write()?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS chat_sessions (
+              id              TEXT PRIMARY KEY,
+              workspace_id    TEXT NOT NULL,
+              title           TEXT NOT NULL,
+              model_provider  TEXT NOT NULL,
+              model_id        TEXT NOT NULL,
+              created_at      TEXT NOT NULL,
+              updated_at      TEXT NOT NULL,
+              archived        INTEGER NOT NULL DEFAULT 0,
+              pinned          INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id, updated_at DESC);",
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO chat_sessions (id, workspace_id, title, model_provider, model_id, created_at, updated_at, archived, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+               title = excluded.title,
+               model_provider = excluded.model_provider,
+               model_id = excluded.model_id,
+               updated_at = excluded.updated_at,
+               archived = excluded.archived,
+               pinned = excluded.pinned",
+            rusqlite::params![
+                session.id,
+                session.workspace_id,
+                session.title,
+                session.model_provider,
+                session.model_id,
+                session.created_at,
+                session.updated_at,
+                if session.archived { 1 } else { 0 },
+                if session.pinned { 1 } else { 0 },
+            ],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Deletes a chat session metadata record by ID.
+    pub fn delete_chat_session(&self, id: &str) -> Result<bool, CoreError> {
+        let conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "chat_sessions") {
+            return Ok(false);
+        }
+        let count = conn
+            .execute("DELETE FROM chat_sessions WHERE id = ?1", [id])
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        Ok(count > 0)
     }
 }
 
@@ -1781,4 +1936,55 @@ mod tests {
         let hits = store.search("keyword", Some(5)).unwrap();
         assert!(hits.len() <= 5, "should respect limit of 5, got {}", hits.len());
     }
+
+    #[test]
+    fn chat_sessions_lifecycle() {
+        let root = tempfile_dir();
+        let store = SqliteStore::from_root(&root);
+
+        // 1. Initially empty
+        let sessions = store.list_chat_sessions(None).unwrap();
+        assert!(sessions.is_empty());
+
+        // 2. Insert session
+        let session = ChatSessionRecord {
+            id: "session-1".into(),
+            workspace_id: "ws-1".into(),
+            title: "First Conversation".into(),
+            model_provider: "anthropic".into(),
+            model_id: "claude-sonnet-4-5".into(),
+            created_at: "2026-08-20T10:00:00Z".into(),
+            updated_at: "2026-08-20T10:00:00Z".into(),
+            archived: false,
+            pinned: false,
+        };
+        store.upsert_chat_session(&session).unwrap();
+
+        // 3. Get session
+        let fetched = store.get_chat_session("session-1").unwrap().expect("session should exist");
+        assert_eq!(fetched.title, "First Conversation");
+        assert_eq!(fetched.model_provider, "anthropic");
+
+        // 4. Update title and pinned
+        let mut updated = session.clone();
+        updated.title = "Updated Conversation".into();
+        updated.pinned = true;
+        store.upsert_chat_session(&updated).unwrap();
+
+        let fetched2 = store.get_chat_session("session-1").unwrap().unwrap();
+        assert_eq!(fetched2.title, "Updated Conversation");
+        assert!(fetched2.pinned);
+
+        // 5. List with workspace filter
+        let list = store.list_chat_sessions(Some("ws-1")).unwrap();
+        assert_eq!(list.len(), 1);
+        let list_other = store.list_chat_sessions(Some("other-ws")).unwrap();
+        assert_eq!(list_other.len(), 0);
+
+        // 6. Delete session
+        let deleted = store.delete_chat_session("session-1").unwrap();
+        assert!(deleted);
+        assert!(store.get_chat_session("session-1").unwrap().is_none());
+    }
 }
+

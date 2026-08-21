@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { inTauriRuntime } from "./RelationsView";
-import { PI_PROVIDERS, type PiModelOption } from "./piModels";
 
 export interface SettingsWorkspace {
   title: string;
@@ -32,34 +31,6 @@ interface KbConfigInfo {
   defaults: string[];
 }
 
-// Zhipu GLM Coding Plan presets: Anthropic-compatible API with separate
-// China (bigmodel.cn) and international (z.ai) endpoints. They map onto the
-// anthropic provider plus a baseUrl override.
-const ZHIPU_PRESETS: Record<string, { label: string; baseUrl: string; envVar: string; models: PiModelOption[] }> = {
-  "zhipu-cn": {
-    label: "智谱 Coding Plan（中国 · bigmodel.cn）",
-    baseUrl: "https://open.bigmodel.cn/api/anthropic",
-    envVar: "ZHIPU_API_KEY",
-    models: [
-      { id: "glm-5.3", name: "GLM-5.3", reasoning: true },
-      { id: "glm-5.2", name: "GLM-5.2", reasoning: true },
-      { id: "glm-5-turbo", name: "GLM-5-Turbo", reasoning: true },
-      { id: "glm-4.7", name: "GLM-4.7", reasoning: true },
-    ],
-  },
-  "zhipu-global": {
-    label: "智谱 Coding Plan（国际 · z.ai）",
-    baseUrl: "https://open.z.ai/api/anthropic",
-    envVar: "Z_AI_API_KEY",
-    models: [
-      { id: "glm-5.3", name: "GLM-5.3", reasoning: true },
-      { id: "glm-5.2", name: "GLM-5.2", reasoning: true },
-      { id: "glm-5-turbo", name: "GLM-5-Turbo", reasoning: true },
-      { id: "glm-4.7", name: "GLM-4.7", reasoning: true },
-    ],
-  },
-};
-
 export interface SettingsViewProps {
   workspace: SettingsWorkspace | null;
   kbStats: SettingsKbStats | null;
@@ -86,11 +57,6 @@ function Icon({ name, size = 16, strokeWidth = 1.7 }: { name: string; size?: num
   );
 }
 
-function formatContext(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 === 0 ? 0 : 1)}M`;
-  return `${Math.round(tokens / 1000)}K`;
-}
-
 export default function SettingsView({ workspace, kbStats, knownWorkspaceCount, onOpenWorkspaceMenu, onIndexed }: SettingsViewProps): React.ReactElement {
   const [indexing, setIndexing] = useState(false);
   const [indexError, setIndexError] = useState<string | null>(null);
@@ -101,96 +67,6 @@ export default function SettingsView({ workspace, kbStats, knownWorkspaceCount, 
   const [dirInput, setDirInput] = useState("");
   const [dirSaving, setDirSaving] = useState(false);
   const [dirError, setDirError] = useState<string | null>(null);
-
-  const [modelProvider, setModelProvider] = useState("");
-  const [modelId, setModelId] = useState("");
-  const [modelApiKey, setModelApiKey] = useState("");
-  const [modelBaseUrl, setModelBaseUrl] = useState("");
-  const [modelThinkingLevel, setModelThinkingLevel] = useState("medium");
-  const [customModel, setCustomModel] = useState(false);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [modelSaving, setModelSaving] = useState(false);
-  const [ModelError, setModelError] = useState<string | null>(null);
-
-  /** Zhipu preset key when the configured baseUrl matches one of their endpoints. */
-  const zhipuPresetKey = Object.keys(ZHIPU_PRESETS).find((key) => ZHIPU_PRESETS[key]!.baseUrl === modelBaseUrl);
-  const activeProvider = PI_PROVIDERS.find((p) => p.value === modelProvider);
-  const providerOptions = modelProvider && !activeProvider
-    ? [...PI_PROVIDERS, { value: modelProvider, label: `${modelProvider} (自定义)`, envVar: "", models: [] }]
-    : PI_PROVIDERS;
-  const modelOptions = zhipuPresetKey ? ZHIPU_PRESETS[zhipuPresetKey]!.models : (activeProvider?.models ?? []);
-  const selectedModel = modelOptions.find((m) => m.id === modelId);
-  const envVarHint = zhipuPresetKey ? ZHIPU_PRESETS[zhipuPresetKey]!.envVar : activeProvider?.envVar;
-
-  // Load the Pi model config whenever the workspace changes.
-  useEffect(() => {
-    setModelError(null);
-    setCustomModel(false);
-    if (!workspace || !inTauriRuntime()) {
-      setModelProvider(""); setModelId(""); setModelApiKey(""); setModelBaseUrl(""); setModelThinkingLevel("medium");
-      return;
-    }
-    let cancelled = false;
-    void invoke<{ provider: string; id: string; apiKey?: string; baseUrl?: string; thinkingLevel?: string } | null>("pi_config_get", { root: workspace.root })
-      .then((model) => {
-        if (cancelled) return;
-        const provider = model?.provider ?? "";
-        const id = model?.id ?? "";
-        const baseUrl = model?.baseUrl ?? "";
-        setModelProvider(provider);
-        setModelId(id);
-        setModelApiKey(model?.apiKey ?? "");
-        setModelBaseUrl(baseUrl);
-        setModelThinkingLevel(model?.thinkingLevel ?? "medium");
-        const presetMatched = Object.values(ZHIPU_PRESETS).some((preset) => preset.baseUrl === baseUrl);
-        setCustomModel(id !== "" && !presetMatched && !PI_PROVIDERS.some((p) => p.value === provider && p.models.some((m) => m.id === id)));
-      })
-      .catch((reason: unknown) => { if (!cancelled) setModelError(String(reason)); });
-    return () => { cancelled = true; };
-  }, [workspace]);
-
-  const onProviderChange = (value: string): void => {
-    setModelError(null);
-    const zhipu = ZHIPU_PRESETS[value];
-    if (zhipu) {
-      setModelProvider("anthropic");
-      setModelBaseUrl(zhipu.baseUrl);
-      if (!zhipu.models.some((m) => m.id === modelId)) {
-        setModelId("");
-        setCustomModel(false);
-      }
-      return;
-    }
-    setModelProvider(value);
-    setModelBaseUrl("");
-    const models = PI_PROVIDERS.find((p) => p.value === value)?.models ?? [];
-    if (!models.some((m) => m.id === modelId)) {
-      setModelId("");
-      setCustomModel(false);
-    }
-  };
-
-  const saveModel = async (): Promise<void> => {
-    if (!workspace || modelSaving) return;
-    setModelSaving(true);
-    setModelError(null);
-    try {
-      await invoke("pi_config_set", {
-        root: workspace.root,
-        model: {
-          provider: modelProvider.trim(),
-          id: modelId.trim(),
-          apiKey: modelApiKey.trim() || undefined,
-          baseUrl: modelBaseUrl.trim() || undefined,
-          thinkingLevel: modelThinkingLevel,
-        },
-      });
-    } catch (reason: unknown) {
-      setModelError(String(reason));
-    } finally {
-      setModelSaving(false);
-    }
-  };
 
   // Load the workspace's index-directory config whenever the workspace changes.
   useEffect(() => {
@@ -329,116 +205,24 @@ export default function SettingsView({ workspace, kbStats, knownWorkspaceCount, 
           <div className="sg-section-head">
             <span className="sg-section-icon"><Icon name="spark" /></span>
             <div>
-              <strong>AI 模型 (Pi)</strong>
-              <p>配置后聊天页使用 Pi 生成式问答;未配置时回退为 FTS5 关键词检索。API Key 也可留空,改用环境变量(如 ANTHROPIC_API_KEY)。</p>
+              <strong>AI Agent 运行时 (Pi)</strong>
+              <p>原生接入 Pi CLI 运行时引擎，模型与认证完全由 Pi CLI 统一管理。</p>
             </div>
-            <button
-              type="button"
-              className="sg-button primary"
-              disabled={!workspace || modelSaving || !modelProvider.trim() || !modelId.trim()}
-              onClick={() => void saveModel()}
-            >
-              {modelSaving ? "保存中…" : "保存模型配置"}
-            </button>
           </div>
-          <div className="sg-model-form">
-            <label className="sg-field">
-              <span>Provider</span>
-              <select
-                value={zhipuPresetKey ?? modelProvider}
-                disabled={!workspace}
-                onChange={(event) => onProviderChange(event.target.value)}
-              >
-                <option value="" disabled>选择 Provider…</option>
-                {Object.entries(ZHIPU_PRESETS).map(([key, preset]) => (
-                  <option key={key} value={key}>{preset.label}</option>
-                ))}
-                {providerOptions.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </select>
-            </label>
-            <label className="sg-field">
-              <span>模型</span>
-              {customModel ? (
-                <input
-                  className="mono"
-                  value={modelId}
-                  placeholder="输入模型 ID,例如 glm-4.7"
-                  autoFocus
-                  disabled={!workspace}
-                  onChange={(event) => { setModelId(event.target.value); setModelError(null); }}
-                  onBlur={() => { if (modelOptions.some((m) => m.id === modelId.trim())) setCustomModel(false); }}
-                />
-              ) : (
-                <select
-                  value={modelOptions.some((m) => m.id === modelId) ? modelId : ""}
-                  disabled={!workspace}
-                  onChange={(event) => {
-                    setModelError(null);
-                    if (event.target.value === "__custom") { setCustomModel(true); setModelId(""); }
-                    else setModelId(event.target.value);
-                  }}
-                >
-                  <option value="" disabled>{modelOptions.length > 0 ? "选择模型…" : "先选择 Provider"}</option>
-                  {modelOptions.map((m) => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                  <option value="__custom">自定义模型 ID…</option>
-                </select>
-              )}
-              {selectedModel && (
-                <em className="sg-model-meta">
-                  {selectedModel.id}
-                  {selectedModel.contextWindow ? ` · ${formatContext(selectedModel.contextWindow)} 上下文` : ""}
-                  {selectedModel.reasoning ? " · 支持推理" : ""}
-                </em>
-              )}
-            </label>
-            <label className="sg-field">
-              <span>思考级别</span>
-              <select
-                value={modelThinkingLevel}
-                disabled={!workspace}
-                onChange={(event) => { setModelThinkingLevel(event.target.value); setModelError(null); }}
-              >
-                <option value="off">关闭</option>
-                <option value="low">低</option>
-                <option value="medium">中</option>
-                <option value="high">高</option>
-              </select>
-              <em className="sg-model-meta">仅对支持推理的模型生效;新建会话后应用</em>
-            </label>
-            <label className="sg-field sg-field-wide">
-              <span>API Key(可选)</span>
-              <span className="sg-key-row">
-                <input
-                  className="mono"
-                  type={showApiKey ? "text" : "password"}
-                  value={modelApiKey}
-                  placeholder={envVarHint ? `留空则使用环境变量 ${envVarHint}` : "留空则使用环境变量"}
-                  disabled={!workspace}
-                  onChange={(event) => { setModelApiKey(event.target.value); setModelError(null); }}
-                />
-                <button
-                  type="button"
-                  aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
-                  disabled={!workspace}
-                  onClick={() => setShowApiKey((v) => !v)}
-                >
-                  {showApiKey ? "隐藏" : "显示"}
-                </button>
-              </span>
-            </label>
-            {modelBaseUrl && (
-              <div className="sg-field sg-field-wide">
-                <span>API 端点</span>
-                <code className="sg-endpoint">{modelBaseUrl}</code>
-              </div>
-            )}
+          <div className="sg-kv">
+            <div className="sg-kv-row">
+              <span>运行协议</span>
+              <strong>Pi Agent Protocol v2 · 单进程 stdio</strong>
+            </div>
+            <div className="sg-kv-row">
+              <span>全局认证与模型</span>
+              <strong>已连接 <code>~/.pi/agent/</code> 及系统环境变量</strong>
+            </div>
+            <div className="sg-kv-row">
+              <span>凭据管理</span>
+              <code>在终端使用 pi auth login 或 pi settings 配置</code>
+            </div>
           </div>
-          {ModelError && <p className="sg-error">错误:{ModelError}</p>}
-          <p className="sg-hint">模型配置保存在工作区 <code>.llm-wiki/config.json</code>,不会上传到任何服务器。</p>
         </section>
 
         <section className="sg-section">
