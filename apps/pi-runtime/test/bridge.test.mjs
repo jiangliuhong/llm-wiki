@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AgentRuntimeServer,
+  ALLOWED_TOOLS,
   HostToolBridge,
   PROTOCOL_VERSION,
 } from "../dist/index.js";
@@ -181,9 +182,11 @@ test("HostToolBridge builds custom tools for Pi SDK", async () => {
     workspaceRoot: "/ws-root",
   });
 
-  assert.equal(customTools.length, 8);
+  assert.equal(customTools.length, ALLOWED_TOOLS.length);
   const searchTool = customTools.find((t) => t.name === "document_search");
   assert.ok(searchTool);
+  const draftCreateTool = customTools.find((t) => t.name === "document_draft_create");
+  assert.ok(draftCreateTool);
 
   const execPromise = searchTool.execute("call-10", { query: "test" }, undefined, undefined, undefined);
 
@@ -200,3 +203,51 @@ test("HostToolBridge builds custom tools for Pi SDK", async () => {
   const execResult = await execPromise;
   assert.deepEqual(JSON.parse(execResult.content[0].text), { count: 1 });
 });
+
+test("HostToolBridge dispatches document_draft_create request", async () => {
+  const toolRequests = [];
+  const bridge = new HostToolBridge((req) => {
+    toolRequests.push(req);
+  });
+
+  const scope = {
+    sessionId: "s1",
+    workspaceId: "w1",
+    workspaceRoot: "/path/to/root",
+  };
+
+  const draftInput = {
+    targetPath: "wiki/agent.md",
+    generatedContent: "# Agent Overview\n\nContent here.",
+    operationType: "create",
+    sourceCitations: ["wiki/welcome.md"],
+  };
+
+  const draftPromise = bridge.executeTool(scope, "document_draft_create", "call-draft-1", draftInput);
+
+  assert.equal(toolRequests.length, 1);
+  assert.equal(toolRequests[0].tool, "document_draft_create");
+  assert.equal(toolRequests[0].toolCallId, "call-draft-1");
+  assert.deepEqual(toolRequests[0].input, draftInput);
+
+  bridge.handleToolResult({
+    protocolVersion: PROTOCOL_VERSION,
+    id: toolRequests[0].id,
+    type: "tool_result",
+    toolCallId: "call-draft-1",
+    ok: true,
+    output: {
+      draftId: "draft-123456",
+      targetPath: "wiki/agent.md",
+      status: "pending",
+    },
+  });
+
+  const res = await draftPromise;
+  assert.deepEqual(res, {
+    draftId: "draft-123456",
+    targetPath: "wiki/agent.md",
+    status: "pending",
+  });
+});
+

@@ -1,6 +1,6 @@
 export const PROTOCOL_VERSION = "2" as const;
 
-export type ReadOnlyTool =
+export type AllowedTool =
   | "workspace_get"
   | "workspace_status"
   | "document_list"
@@ -8,9 +8,17 @@ export type ReadOnlyTool =
   | "document_read"
   | "document_read_range"
   | "document_relations"
-  | "document_neighborhood";
+  | "document_neighborhood"
+  | "document_draft_create"
+  | "document_draft_get"
+  | "document_draft_list"
+  | "document_draft_delete"
+  | "relation_proposal_create"
+  | "relation_proposal_list";
 
-export const ALLOWED_READ_ONLY_TOOLS: readonly ReadOnlyTool[] = [
+export type ReadOnlyTool = AllowedTool;
+
+export const ALLOWED_TOOLS: readonly AllowedTool[] = [
   "workspace_get",
   "workspace_status",
   "document_list",
@@ -19,11 +27,21 @@ export const ALLOWED_READ_ONLY_TOOLS: readonly ReadOnlyTool[] = [
   "document_read_range",
   "document_relations",
   "document_neighborhood",
+  "document_draft_create",
+  "document_draft_get",
+  "document_draft_list",
+  "document_draft_delete",
+  "relation_proposal_create",
+  "relation_proposal_list",
 ] as const;
 
-export function isAllowedReadOnlyTool(tool: string): tool is ReadOnlyTool {
-  return (ALLOWED_READ_ONLY_TOOLS as readonly string[]).includes(tool);
+export const ALLOWED_READ_ONLY_TOOLS = ALLOWED_TOOLS;
+
+export function isAllowedTool(tool: string): tool is AllowedTool {
+  return (ALLOWED_TOOLS as readonly string[]).includes(tool);
 }
+
+export const isAllowedReadOnlyTool = isAllowedTool;
 
 export type AgentErrorCode =
   | "PI_RUNTIME_NOT_FOUND"

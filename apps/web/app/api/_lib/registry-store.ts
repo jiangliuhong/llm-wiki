@@ -111,7 +111,7 @@ function initializeProject(root: string, configPath: string, requestedTitle?: st
     title,
     port: 3000,
     kb: {
-      include: ["wiki"],
+      include: ["wiki", "docs"],
       exclude: ["node_modules", ".git", ".llm-wiki", "dist", "build", "out"],
       chunk: { maxChars: 1200, overlap: 200 },
       embedding: { enabled: false, dimensions: 1536 },

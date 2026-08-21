@@ -22,6 +22,27 @@ export interface StreamingState {
   toolCalls: ToolCallItem[];
 }
 
+export function deriveSessionTitle(text: string): string {
+  const trimmed = text.trim();
+  if (
+    trimmed.startsWith("请使用 document_list 和 document_read 工具全面阅读") ||
+    trimmed.includes("全面阅读并分析当前知识库的所有 Markdown 文档")
+  ) {
+    return "知识库全局关联分析";
+  }
+  const relMatch = trimmed.match(/请针对文档\s*["“]([^"”]+)["”](?:[（(]([^）)]+)[）)])?/);
+  if (relMatch) {
+    const doc = relMatch[2] || relMatch[1]?.split("/").pop()?.replace(/\.[^.]+$/, "") || relMatch[1];
+    return `关联分析: ${doc}`;
+  }
+  const docMatch = trimmed.match(/请结合文档\s*["“]([^"”]+)["”]/);
+  if (docMatch) {
+    const doc = docMatch[1]?.split("/").pop()?.replace(/\.[^.]+$/, "") || docMatch[1];
+    return `文档问答: ${doc}`;
+  }
+  return trimmed.slice(0, 30);
+}
+
 export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentChatOptions) {
   const clientRef = useRef<AgentClient>(customClient ?? createAgentClient());
   const client = clientRef.current;
@@ -64,6 +85,7 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
   const refreshSessions = useCallback(async (): Promise<void> => {
     if (!workspaceRoot) {
       setSessions([]);
+      activeSessionIdRef.current = null;
       setActiveSessionId(null);
       setMessages([]);
       return;
@@ -73,6 +95,7 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
       setSessions(list);
       // If active session was deleted, clear it
       if (activeSessionIdRef.current && !list.some((s) => s.sessionId === activeSessionIdRef.current)) {
+        activeSessionIdRef.current = null;
         setActiveSessionId(null);
         setMessages([]);
       }
@@ -93,6 +116,7 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
     try {
       const snapshot = await client.getSession(workspaceRoot, sessionId);
       setMessages(snapshot.messages || []);
+      activeSessionIdRef.current = sessionId;
       setActiveSessionId(sessionId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -102,6 +126,7 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
   }, [client, workspaceRoot]);
 
   const selectSession = useCallback((sessionId: string | null): void => {
+    activeSessionIdRef.current = sessionId;
     setActiveSessionId(sessionId);
     setError(null);
     if (!sessionId) {
@@ -175,9 +200,10 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
   const createSession = useCallback(async (title?: string, model?: ModelConfig): Promise<string> => {
     if (!workspaceRoot) throw new Error("No workspace selected");
     const summary = await client.createSession({ workspaceRoot, title, model });
-    await refreshSessions();
+    activeSessionIdRef.current = summary.sessionId;
     setActiveSessionId(summary.sessionId);
     setMessages([]);
+    await refreshSessions();
     return summary.sessionId;
   }, [client, refreshSessions, workspaceRoot]);
 
@@ -192,7 +218,8 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
     let targetSessionId = activeSessionIdRef.current;
     if (!targetSessionId) {
       try {
-        targetSessionId = await createSession(trimmed.slice(0, 30), model);
+        const derivedTitle = deriveSessionTitle(trimmed);
+        targetSessionId = await createSession(derivedTitle, model);
       } catch (err) {
         setSending(false);
         setError(err instanceof Error ? err.message : String(err));
@@ -250,19 +277,99 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
 
   const cancelPrompt = useCallback(async (): Promise<void> => {
     const cur = activeSessionIdRef.current;
-    if (!cur) return;
-    try {
-      await client.cancel(cur);
-    } catch (err) {
-      console.error("[useAgentChat] cancel failed:", err);
+    if (cur) {
+      try {
+        await client.cancel(cur);
+      } catch (err) {
+        console.error("[useAgentChat] cancel failed:", err);
+      }
     }
+    setSending(false);
+    setStreaming({ text: "", thinking: "", phase: "idle", toolCalls: [] });
   }, [client]);
+
+  const startNewChat = useCallback(async (initialPromptText?: string, autoSend = false, model?: ModelConfig): Promise<void> => {
+    if (!workspaceRoot) return;
+
+    // 1. Cancel any active prompt from previous chat
+    if (activeSessionIdRef.current) {
+      try {
+        await client.cancel(activeSessionIdRef.current);
+      } catch (err) {
+        console.error("[useAgentChat] cancel failed during startNewChat:", err);
+      }
+    }
+
+    // 2. Reset session state to clean new chat
+    activeSessionIdRef.current = null;
+    setActiveSessionId(null);
+    setMessages([]);
+    setError(null);
+    setStreaming({ text: "", thinking: "", phase: "idle", toolCalls: [] });
+    setSending(false);
+
+    // 3. If autoSend with a non-empty prompt, create a new session immediately and send
+    const trimmed = (initialPromptText ?? "").trim();
+    if (trimmed && autoSend) {
+      setSending(true);
+      try {
+        const title = deriveSessionTitle(trimmed);
+        const summary = await client.createSession({ workspaceRoot, title, model });
+        activeSessionIdRef.current = summary.sessionId;
+        setActiveSessionId(summary.sessionId);
+        await refreshSessions();
+
+        const userMessage: ChatMessageItem = {
+          id: `msg-${Date.now()}-user`,
+          role: "user",
+          text: trimmed,
+          createdAt: Date.now(),
+        };
+        setMessages([userMessage]);
+        setStreaming({ text: "", thinking: "", phase: "thinking", toolCalls: [] });
+
+        const outcome = await client.prompt(workspaceRoot, summary.sessionId, trimmed, model);
+        const assistantMessage: ChatMessageItem = {
+          id: `msg-${Date.now()}-assistant`,
+          role: "assistant",
+          text: outcome.text || streamingRef.current.text,
+          thinking: outcome.thinking || streamingRef.current.thinking,
+          toolCalls: streamingRef.current.toolCalls.length > 0 ? streamingRef.current.toolCalls : undefined,
+          createdAt: Date.now(),
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        await refreshSessions();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
+        const cur = streamingRef.current;
+        if (cur.text || cur.thinking) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `msg-${Date.now()}-assistant-partial`,
+              role: "assistant",
+              text: cur.text,
+              thinking: cur.thinking,
+              toolCalls: cur.toolCalls.length > 0 ? cur.toolCalls : undefined,
+              errorMessage: msg,
+              createdAt: Date.now(),
+            },
+          ]);
+        }
+      } finally {
+        setSending(false);
+        setStreaming({ text: "", thinking: "", phase: "idle", toolCalls: [] });
+      }
+    }
+  }, [client, refreshSessions, workspaceRoot]);
 
   const deleteSession = useCallback(async (sessionId: string): Promise<void> => {
     if (!workspaceRoot) return;
     try {
       await client.deleteSession(workspaceRoot, sessionId);
       if (activeSessionIdRef.current === sessionId) {
+        activeSessionIdRef.current = null;
         setActiveSessionId(null);
         setMessages([]);
       }
@@ -275,8 +382,9 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
   const forkSession = useCallback(async (sessionId: string, title?: string): Promise<string> => {
     if (!workspaceRoot) throw new Error("No workspace selected");
     const summary = await client.fork(workspaceRoot, sessionId, title);
-    await refreshSessions();
+    activeSessionIdRef.current = summary.sessionId;
     setActiveSessionId(summary.sessionId);
+    await refreshSessions();
     await loadSession(summary.sessionId);
     return summary.sessionId;
   }, [client, loadSession, refreshSessions, workspaceRoot]);
@@ -318,6 +426,7 @@ export function useAgentChat({ workspaceRoot, client: customClient }: UseAgentCh
     selectSession,
     createSession,
     sendMessage,
+    startNewChat,
     cancelPrompt,
     deleteSession,
     forkSession,

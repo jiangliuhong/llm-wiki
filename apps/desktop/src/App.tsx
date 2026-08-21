@@ -1,12 +1,12 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import RelationsView, { inTauriRuntime } from "./RelationsView";
+import RelationsView, { inTauriRuntime, type RelationProposal, type RelationsPayload } from "./RelationsView";
 import SettingsView from "./SettingsView";
 import { useAgentChat } from "./useAgentChat";
-import type { AvailableModelItem, ChatMessageItem, SessionInfo } from "./agentClient";
+import type { AvailableModelItem, ChatMessageItem, SessionInfo, ToolCallItem } from "./agentClient";
 
 type View = "chat" | "documents" | "relations" | "imports" | "drafts" | "tasks" | "settings";
 
@@ -83,6 +83,941 @@ interface DraftApplyResult {
   backupPath: string | null;
 }
 
+const OPERATION_LABELS: Record<string, string> = {
+  create: "新建文档",
+  overwrite: "完全覆盖",
+  update: "更新内容",
+  append: "末尾追加",
+  update_section: "替换小节",
+};
+
+function unwrapToolResult(data: unknown): unknown {
+  if (!data) return null;
+  let cur: unknown = data;
+
+  // If wrapped in Pi SDK tool execution result: { content: [{ type: "text", text: "..." }] }
+  if (typeof cur === "object" && cur !== null && "content" in cur) {
+    const content = (cur as { content?: unknown }).content;
+    if (Array.isArray(content) && content.length > 0) {
+      const first = content[0] as { type?: string; text?: string; result?: unknown };
+      if (first?.text) {
+        cur = first.text;
+      } else if (first?.result !== undefined) {
+        cur = first.result;
+      }
+    }
+  }
+
+  // If string, try to parse JSON
+  if (typeof cur === "string") {
+    const trimmed = cur.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        cur = JSON.parse(trimmed);
+      } catch {
+        // keep string
+      }
+    }
+  }
+
+  // If nested output/result/data
+  if (typeof cur === "object" && cur !== null) {
+    const obj = cur as Record<string, unknown>;
+    if (obj.result && typeof obj.result === "object") {
+      cur = obj.result;
+    } else if (obj.output && typeof obj.output === "object") {
+      cur = obj.output;
+    } else if (obj.data && typeof obj.data === "object") {
+      cur = obj.data;
+    }
+  }
+
+  return cur;
+}
+
+function parseDraftResult(toolOrData: ToolCallItem | string | unknown): Draft | null {
+  if (!toolOrData) return null;
+
+  let raw: unknown = toolOrData;
+  let argsObj: Record<string, unknown> | null = null;
+
+  if (typeof toolOrData === "object" && toolOrData !== null && "toolName" in toolOrData) {
+    const tool = toolOrData as ToolCallItem;
+    if (tool.toolName !== "document_draft_create") return null;
+    raw = tool.result;
+    if (tool.args && typeof tool.args === "object") {
+      argsObj = tool.args as Record<string, unknown>;
+    }
+  }
+
+  const unwrapped = unwrapToolResult(raw) ?? unwrapToolResult(argsObj);
+  if (!unwrapped || typeof unwrapped !== "object") {
+    if (argsObj) {
+      return {
+        id: 0,
+        draftId: String(argsObj.draftId || argsObj.draft_id || ""),
+        workspaceId: String(argsObj.workspaceId || argsObj.workspace_id || ""),
+        targetPath: String(argsObj.targetPath || argsObj.target_path || "wiki/untitled.md"),
+        operationType: String(argsObj.operationType || argsObj.operation_type || "create"),
+        baseDocumentHash: String(argsObj.baseDocumentHash || argsObj.base_document_hash || ""),
+        generatedContent: String(argsObj.generatedContent || argsObj.generated_content || argsObj.content || ""),
+        sourceCitations: Array.isArray(argsObj.sourceCitations)
+          ? (argsObj.sourceCitations as unknown[]).map(String)
+          : Array.isArray(argsObj.source_citations)
+            ? (argsObj.source_citations as unknown[]).map(String)
+            : [],
+        sectionSlug: String(argsObj.sectionSlug || argsObj.section_slug || ""),
+        status: "pending",
+        createdBy: "ai-chat",
+        createdAt: new Date().toISOString(),
+        reviewedAt: null,
+      };
+    }
+    return null;
+  }
+
+  const d = unwrapped as Record<string, unknown>;
+  const draftId = String(d.draftId || d.draft_id || argsObj?.draftId || argsObj?.draft_id || "");
+  const targetPath = String(d.targetPath || d.target_path || argsObj?.targetPath || argsObj?.target_path || "wiki/untitled.md");
+  const generatedContent = String(d.generatedContent || d.generated_content || d.content || argsObj?.generatedContent || argsObj?.generated_content || argsObj?.content || "");
+
+  if (!targetPath && !generatedContent && !draftId) {
+    return null;
+  }
+
+  return {
+    id: Number(d.id || 0),
+    draftId,
+    workspaceId: String(d.workspaceId || d.workspace_id || ""),
+    targetPath,
+    operationType: String(d.operationType || d.operation_type || argsObj?.operationType || argsObj?.operation_type || "create"),
+    baseDocumentHash: String(d.baseDocumentHash || d.base_document_hash || ""),
+    generatedContent,
+    sourceCitations: Array.isArray(d.sourceCitations)
+      ? (d.sourceCitations as unknown[]).map(String)
+      : Array.isArray(d.source_citations)
+        ? (d.source_citations as unknown[]).map(String)
+        : Array.isArray(argsObj?.sourceCitations)
+          ? (argsObj.sourceCitations as unknown[]).map(String)
+          : Array.isArray(argsObj?.source_citations)
+            ? (argsObj.source_citations as unknown[]).map(String)
+            : [],
+    sectionSlug: String(d.sectionSlug || d.section_slug || ""),
+    status: String(d.status || "pending"),
+    createdBy: String(d.createdBy || d.created_by || "ai-chat"),
+    createdAt: String(d.createdAt || d.created_at || new Date().toISOString()),
+    reviewedAt: d.reviewedAt ? String(d.reviewedAt) : null,
+  };
+}
+
+function docName(path: string): string {
+  const clean = path.replace(/\\/g, "/");
+  const file = clean.split("/").pop() ?? clean;
+  return file.replace(/\.[^.]+$/, "");
+}
+
+function prettyRelationType(type: string): string {
+  const map: Record<string, string> = {
+    depends_on: "依赖 (depends_on)",
+    implements: "实现 (implements)",
+    extends: "扩展/继承 (extends)",
+    references: "引用 (references)",
+    feeds_into: "输入流向 (feeds_into)",
+    consumed_by: "被消费 (consumed_by)",
+    related_to: "关联 (related_to)",
+    parent_of: "父级 (parent_of)",
+    child_of: "子级 (child_of)",
+    derives_from: "派生自 (derives_from)",
+  };
+  return map[type] ?? type.replace(/_/g, " ");
+}
+
+function parseRelationProposal(toolOrData: ToolCallItem | string | unknown): RelationProposal | null {
+  if (!toolOrData) return null;
+
+  let raw: unknown = toolOrData;
+  let argsObj: Record<string, unknown> | null = null;
+
+  if (typeof toolOrData === "object" && toolOrData !== null && "toolName" in toolOrData) {
+    const tool = toolOrData as ToolCallItem;
+    if (tool.toolName !== "relation_proposal_create" && tool.toolName !== "relation_proposal_list") return null;
+    raw = tool.result;
+    if (tool.args && typeof tool.args === "object") {
+      argsObj = tool.args as Record<string, unknown>;
+    }
+  }
+
+  const unwrapped = unwrapToolResult(raw) ?? unwrapToolResult(argsObj);
+  if (!unwrapped || typeof unwrapped !== "object") {
+    if (argsObj) {
+      const sourcePath = String(argsObj.sourcePath || argsObj.source_path || argsObj.source || "");
+      const targetPath = String(argsObj.targetPath || argsObj.target_path || argsObj.target || "");
+      if (!sourcePath || !targetPath) return null;
+      const evidence = (argsObj.evidence && typeof argsObj.evidence === "object") ? (argsObj.evidence as Record<string, unknown>) : null;
+      return {
+        id: Number(argsObj.id || 0),
+        sourceFileId: null,
+        targetFileId: null,
+        sourcePath,
+        targetPath,
+        relationType: String(argsObj.relationType || argsObj.relation_type || argsObj.type || "related_to"),
+        confidence: Number(argsObj.confidence ?? 0.85),
+        rationale: String(argsObj.rationale || argsObj.reason || ""),
+        evidencePath: String(argsObj.evidencePath || argsObj.evidence_path || evidence?.path || sourcePath),
+        evidenceStartLine: Number(argsObj.evidenceStartLine || argsObj.evidence_start_line || evidence?.startLine || evidence?.start_line || 1),
+        evidenceEndLine: Number(argsObj.evidenceEndLine || argsObj.evidence_end_line || evidence?.endLine || evidence?.end_line || 1),
+        evidenceText: argsObj.evidenceText ? String(argsObj.evidenceText) : evidence?.text ? String(evidence.text) : null,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        reviewedAt: null,
+      };
+    }
+    return null;
+  }
+
+  const d = unwrapped as Record<string, unknown>;
+  const sourcePath = String(d.sourcePath || d.source_path || argsObj?.sourcePath || argsObj?.source_path || "");
+  const targetPath = String(d.targetPath || d.target_path || argsObj?.targetPath || argsObj?.target_path || "");
+  if (!sourcePath || !targetPath) {
+    return null;
+  }
+
+  const evidence = (d.evidence && typeof d.evidence === "object") ? (d.evidence as Record<string, unknown>) : (argsObj?.evidence && typeof argsObj?.evidence === "object") ? (argsObj?.evidence as Record<string, unknown>) : null;
+
+  return {
+    id: Number(d.id || argsObj?.id || 0),
+    sourceFileId: d.sourceFileId ? Number(d.sourceFileId) : null,
+    targetFileId: d.targetFileId ? Number(d.targetFileId) : null,
+    sourcePath,
+    targetPath,
+    relationType: String(d.relationType || d.relation_type || argsObj?.relationType || argsObj?.relation_type || "related_to"),
+    confidence: Number(d.confidence ?? argsObj?.confidence ?? 0.85),
+    rationale: String(d.rationale || d.reason || argsObj?.rationale || argsObj?.reason || ""),
+    evidencePath: String(d.evidencePath || d.evidence_path || evidence?.path || argsObj?.evidencePath || sourcePath),
+    evidenceStartLine: Number(d.evidenceStartLine || d.evidence_start_line || evidence?.startLine || evidence?.start_line || argsObj?.evidenceStartLine || 1),
+    evidenceEndLine: Number(d.evidenceEndLine || d.evidence_end_line || evidence?.endLine || evidence?.end_line || argsObj?.evidenceEndLine || 1),
+    evidenceText: d.evidenceText ? String(d.evidenceText) : evidence?.text ? String(evidence.text) : argsObj?.evidenceText ? String(argsObj.evidenceText) : null,
+    status: String(d.status || "pending"),
+    createdAt: String(d.createdAt || d.created_at || new Date().toISOString()),
+    reviewedAt: d.reviewedAt ? String(d.reviewedAt) : null,
+  };
+}
+
+function extractRelationProposals(message: ChatMessageItem): RelationProposal[] {
+  const list: RelationProposal[] = [];
+  const seen = new Set<string>();
+
+  const addUnique = (p: RelationProposal | null) => {
+    if (!p) return;
+    const key = `${p.sourcePath}::${p.targetPath}::${p.relationType}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      list.push(p);
+    }
+  };
+
+  for (const tool of message.toolCalls ?? []) {
+    if (tool.toolName === "relation_proposal_create") {
+      addUnique(parseRelationProposal(tool));
+    } else if (tool.toolName === "relation_proposal_list") {
+      const unwrapped = unwrapToolResult(tool.result);
+      if (Array.isArray(unwrapped)) {
+        for (const item of unwrapped) {
+          addUnique(parseRelationProposal(item));
+        }
+      }
+    }
+  }
+
+  // Also check if text is raw JSON array of proposals
+  if (list.length === 0 && message.text && message.text.trim().startsWith("[")) {
+    const unwrapped = unwrapToolResult(message.text.trim());
+    if (Array.isArray(unwrapped)) {
+      for (const item of unwrapped) {
+        addUnique(parseRelationProposal(item));
+      }
+    }
+  }
+
+  return list;
+}
+
+function DraftCard({
+  tool,
+  workspace,
+  onNavigateView,
+  onDraftApplied,
+  onOpenDocument: _onOpenDocument,
+}: {
+  tool: ToolCallItem;
+  workspace: WorkspaceInfo | null;
+  onNavigateView?: (view: View) => void;
+  onDraftApplied?: () => void;
+  onOpenDocument: (fileId: number) => void;
+}): React.ReactElement | null {
+  const parsed = useMemo(() => parseDraftResult(tool), [tool]);
+  const [draftState, setDraftState] = useState<Draft | null>(parsed);
+  const [applying, setApplying] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [appliedResult, setAppliedResult] = useState<DraftApplyResult | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (parsed) {
+      setDraftState(parsed);
+
+      if (workspace && inTauriRuntime()) {
+        const syncWithDb = async (): Promise<void> => {
+          try {
+            if (parsed.draftId) {
+              const latest = await invoke<Draft | null>("draft_get", {
+                root: workspace.root,
+                draftId: parsed.draftId,
+              });
+              if (!cancelled && latest) {
+                setDraftState(latest);
+                return;
+              }
+            }
+
+            // If draftId wasn't found or wasn't set, try to match in draft_list
+            const list = await invoke<Draft[]>("draft_list", { root: workspace.root, status: null });
+            if (!cancelled && list) {
+              const matched = list.find((d) =>
+                (parsed.draftId && d.draftId === parsed.draftId) ||
+                (d.targetPath === parsed.targetPath && d.generatedContent === parsed.generatedContent) ||
+                (d.targetPath === parsed.targetPath && d.operationType === parsed.operationType && d.status !== "pending")
+              );
+              if (matched) {
+                setDraftState(matched);
+              }
+            }
+          } catch (err) {
+            console.error("Failed to sync draft status with database:", err);
+          }
+        };
+
+        void syncWithDb();
+      }
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [parsed, workspace]);
+
+  if (!draftState) return null;
+
+  const isPending = draftState.status === "pending";
+  const isApplied = draftState.status === "applied";
+
+  const handleApply = async (): Promise<void> => {
+    if (!workspace || applying) return;
+    setApplying(true);
+    setActionError(null);
+    try {
+      let effectiveDraftId = draftState.draftId;
+      if (!effectiveDraftId) {
+        // Create the draft in SQLite store on-demand if draftId was not yet persisted
+        const created = await invoke<Draft>("draft_create", {
+          root: workspace.root,
+          workspaceId: workspace.id,
+          targetPath: draftState.targetPath,
+          operationType: draftState.operationType,
+          baseDocumentHash: draftState.baseDocumentHash || null,
+          generatedContent: draftState.generatedContent,
+          sourceCitations: draftState.sourceCitations.length > 0 ? draftState.sourceCitations : null,
+          sectionSlug: draftState.sectionSlug || null,
+          createdBy: "ai-chat",
+        });
+        effectiveDraftId = created.draftId || (created as unknown as { draft_id?: string }).draft_id || "";
+        setDraftState({
+          ...created,
+          draftId: effectiveDraftId,
+          targetPath: created.targetPath || (created as unknown as { target_path?: string }).target_path || draftState.targetPath,
+          operationType: created.operationType || (created as unknown as { operation_type?: string }).operation_type || draftState.operationType,
+          generatedContent: created.generatedContent || (created as unknown as { generated_content?: string }).generated_content || draftState.generatedContent,
+        });
+      }
+
+      if (!effectiveDraftId) {
+        throw new Error("未能获取或创建草稿，请重试。");
+      }
+
+      const result = await invoke<DraftApplyResult>("draft_apply", {
+        root: workspace.root,
+        draftId: effectiveDraftId,
+      });
+      setAppliedResult(result);
+      setDraftState((prev) => (prev ? { ...prev, status: "applied", draftId: effectiveDraftId } : null));
+      if (tool && typeof tool === "object" && typeof tool.result === "object" && tool.result !== null) {
+        (tool.result as Record<string, unknown>).status = "applied";
+        if (effectiveDraftId) {
+          (tool.result as Record<string, unknown>).draftId = effectiveDraftId;
+        }
+      }
+      void invoke("index_run", { root: workspace.root, reset: false }).catch(() => {});
+      onDraftApplied?.();
+    } catch (err) {
+      setActionError(String(err));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const handleReject = async (): Promise<void> => {
+    if (!workspace || rejecting) return;
+    setRejecting(true);
+    setActionError(null);
+    try {
+      let effectiveDraftId = draftState.draftId;
+      if (!effectiveDraftId) {
+        const created = await invoke<Draft>("draft_create", {
+          root: workspace.root,
+          workspaceId: workspace.id,
+          targetPath: draftState.targetPath,
+          operationType: draftState.operationType,
+          baseDocumentHash: draftState.baseDocumentHash || null,
+          generatedContent: draftState.generatedContent,
+          sourceCitations: draftState.sourceCitations.length > 0 ? draftState.sourceCitations : null,
+          sectionSlug: draftState.sectionSlug || null,
+          createdBy: "ai-chat",
+        });
+        effectiveDraftId = created.draftId || (created as unknown as { draft_id?: string }).draft_id || "";
+      }
+      if (effectiveDraftId) {
+        await invoke<Draft>("draft_reject", {
+          root: workspace.root,
+          draftId: effectiveDraftId,
+        });
+      }
+      setDraftState((prev) => (prev ? { ...prev, status: "rejected", draftId: effectiveDraftId } : null));
+      if (tool && typeof tool === "object" && typeof tool.result === "object" && tool.result !== null) {
+        (tool.result as Record<string, unknown>).status = "rejected";
+        if (effectiveDraftId) {
+          (tool.result as Record<string, unknown>).draftId = effectiveDraftId;
+        }
+      }
+    } catch (err) {
+      setActionError(String(err));
+    } finally {
+      setRejecting(false);
+    }
+  };
+
+  return (
+    <div className={`msg-draft-card ${draftState.status}`}>
+      <div className="msg-draft-card-header">
+        <div className="msg-draft-card-title-group">
+          <Icon name="draft" size={16} />
+          <span className="msg-draft-card-path">{draftState.targetPath}</span>
+          <span className="eyebrow-doc">
+            {OPERATION_LABELS[draftState.operationType] ?? draftState.operationType}
+          </span>
+        </div>
+        <div className="msg-draft-card-badge-group">
+          <span className={`draft-badge ${draftState.status}`}>
+            {isPending ? "待确认写入" : isApplied ? "已写入知识库" : "已拒绝"}
+          </span>
+        </div>
+      </div>
+
+      {draftState.sourceCitations && draftState.sourceCitations.length > 0 && (
+        <div className="msg-draft-citations">
+          引用来源: {draftState.sourceCitations.join(", ")}
+        </div>
+      )}
+
+      {actionError && (
+        <div className="msg-error" style={{ margin: "6px 0" }}>
+          操作失败: {actionError}
+        </div>
+      )}
+
+      {appliedResult && (
+        <div className="msg-draft-success">
+          <Icon name="check" size={14} /> 已成功写入工作区（{appliedResult.bytesWritten} 字节）并自动触发索引
+        </div>
+      )}
+
+      <div className="msg-draft-card-actions">
+        {isPending && (
+          <>
+            <button
+              className="primary-button small"
+              onClick={() => void handleApply()}
+              disabled={applying || rejecting || (!draftState.draftId && !draftState.generatedContent)}
+            >
+              <Icon name="check" size={13} />
+              {applying ? "正在写入…" : "确认写入知识库"}
+            </button>
+            <button
+              className="tool-button small"
+              onClick={() => void handleReject()}
+              disabled={applying || rejecting}
+            >
+              <Icon name="close" size={13} />
+              {rejecting ? "正在拒绝…" : "拒绝草稿"}
+            </button>
+          </>
+        )}
+
+        {onNavigateView && (
+          <button
+            className="tool-button small"
+            onClick={() => onNavigateView("drafts")}
+            title="在草稿箱查看所有待处理草稿"
+          >
+            <Icon name="list" size={13} />
+            在草稿箱查看
+          </button>
+        )}
+
+        {draftState.generatedContent && (
+          <button
+            className="tool-button small"
+            onClick={() => setShowPreview(!showPreview)}
+          >
+            {showPreview ? "收起预览" : "预览内容"}
+          </button>
+        )}
+      </div>
+
+      {showPreview && draftState.generatedContent && (
+        <div
+          className="article-body msg-draft-preview"
+          style={{
+            margin: "10px 0 0",
+            padding: "14px 18px",
+            borderRadius: "8px",
+            background: "var(--bg-surface-main)",
+            border: "1px solid var(--border-subtle)",
+            maxHeight: "360px",
+            overflowY: "auto",
+          }}
+        >
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {draftState.generatedContent}
+          </ReactMarkdown>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RelationProposalsCard({
+  proposals,
+  workspace,
+  onNavigateView,
+  onSendPrompt,
+  onOpenDocument: _onOpenDocument,
+}: {
+  proposals: RelationProposal[];
+  workspace: WorkspaceInfo | null;
+  onNavigateView?: (view: View) => void;
+  onSendPrompt?: (prompt: string) => void;
+  onOpenDocument: (fileId: number) => void;
+}): React.ReactElement | null {
+  const [proposalStates, setProposalStates] = useState<RelationProposal[]>(proposals);
+  const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [approvingAll, setApprovingAll] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setProposalStates(proposals);
+
+    if (workspace && inTauriRuntime() && proposals.length > 0) {
+      const syncWithDb = async (): Promise<void> => {
+        try {
+          const payload = await invoke<RelationsPayload>("relations_list", { root: workspace.root });
+          if (cancelled || !payload) return;
+
+          setProposalStates((currentList) => {
+            return currentList.map((p) => {
+              // 1. Match by proposal ID
+              if (p.id > 0) {
+                const dbProp = payload.proposals.find((dbP) => dbP.id === p.id);
+                if (dbProp) {
+                  return { ...p, status: dbProp.status, reviewedAt: dbProp.reviewedAt };
+                }
+              }
+
+              // 2. Match in published relations (already approved edge in graph)
+              const isPublished = payload.published.some(
+                (pub) =>
+                  pub.sourcePath === p.sourcePath &&
+                  pub.targetPath === p.targetPath &&
+                  pub.relationType === p.relationType,
+              );
+              if (isPublished) {
+                const matchingProp = payload.proposals.find(
+                  (dbP) =>
+                    dbP.sourcePath === p.sourcePath &&
+                    dbP.targetPath === p.targetPath &&
+                    dbP.relationType === p.relationType,
+                );
+                return {
+                  ...p,
+                  id: matchingProp ? matchingProp.id : p.id,
+                  status: "approved",
+                };
+              }
+
+              // 3. Match in relation proposals by source, target, type
+              const matchingProp = payload.proposals.find(
+                (dbP) =>
+                  dbP.sourcePath === p.sourcePath &&
+                  dbP.targetPath === p.targetPath &&
+                  dbP.relationType === p.relationType,
+              );
+              if (matchingProp) {
+                return {
+                  ...p,
+                  id: matchingProp.id,
+                  status: matchingProp.status,
+                  reviewedAt: matchingProp.reviewedAt,
+                };
+              }
+
+              return p;
+            });
+          });
+        } catch (err) {
+          console.error("Failed to sync relation proposals with database:", err);
+        }
+      };
+
+      void syncWithDb();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [proposals, workspace]);
+
+  if (proposalStates.length === 0) return null;
+
+  const pendingList = proposalStates.filter((p) => p.status === "pending");
+  const isAllResolved = pendingList.length === 0;
+
+  const handleApprove = async (p: RelationProposal, idx: number): Promise<void> => {
+    if (!workspace || approvingId !== null) return;
+    setApprovingId(p.id || idx + 1);
+    setActionError(null);
+    try {
+      let effId = p.id;
+      if (!effId || effId <= 0) {
+        const existingList = await invoke<RelationsPayload>("relations_list", { root: workspace.root }).catch(() => null);
+        const existing = existingList?.proposals.find(
+          (item) => item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType,
+        );
+        if (existing && existing.id > 0) {
+          effId = existing.id;
+        } else {
+          const created = await invoke<RelationProposal>("relation_proposal_create", {
+            root: workspace.root,
+            input: {
+              sourcePath: p.sourcePath,
+              targetPath: p.targetPath,
+              relationType: p.relationType,
+              confidence: p.confidence,
+              rationale: p.rationale,
+              evidencePath: p.evidencePath || p.sourcePath,
+              evidenceStartLine: p.evidenceStartLine || 1,
+              evidenceEndLine: p.evidenceEndLine || 1,
+              evidenceText: p.evidenceText || null,
+            },
+          });
+          effId = created.id;
+        }
+      }
+      if (effId > 0) {
+        await invoke("relation_proposal_approve", { root: workspace.root, id: effId });
+      }
+      setProposalStates((prev) =>
+        prev.map((item, i) => (i === idx || (item.id && item.id === p.id) ? { ...item, id: effId, status: "approved" } : item)),
+      );
+      setSuccessMessage(`已批准「${docName(p.sourcePath)} → ${docName(p.targetPath)}」进入关系图谱`);
+    } catch (err) {
+      setActionError(String(err));
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleReject = async (p: RelationProposal, idx: number): Promise<void> => {
+    if (!workspace || rejectingId !== null) return;
+    setRejectingId(p.id || idx + 1);
+    setActionError(null);
+    try {
+      let effId = p.id;
+      if (!effId || effId <= 0) {
+        const existingList = await invoke<RelationsPayload>("relations_list", { root: workspace.root }).catch(() => null);
+        const existing = existingList?.proposals.find(
+          (item) => item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType,
+        );
+        if (existing && existing.id > 0) {
+          effId = existing.id;
+        } else {
+          const created = await invoke<RelationProposal>("relation_proposal_create", {
+            root: workspace.root,
+            input: {
+              sourcePath: p.sourcePath,
+              targetPath: p.targetPath,
+              relationType: p.relationType,
+              confidence: p.confidence,
+              rationale: p.rationale,
+              evidencePath: p.evidencePath || p.sourcePath,
+              evidenceStartLine: p.evidenceStartLine || 1,
+              evidenceEndLine: p.evidenceEndLine || 1,
+              evidenceText: p.evidenceText || null,
+            },
+          });
+          effId = created.id;
+        }
+      }
+      if (effId > 0) {
+        await invoke("relation_proposal_reject", { root: workspace.root, id: effId });
+      }
+      setProposalStates((prev) =>
+        prev.map((item, i) => (i === idx || (item.id && item.id === p.id) ? { ...item, id: effId, status: "rejected" } : item)),
+      );
+      setSuccessMessage(`已忽略该关系提案`);
+    } catch (err) {
+      setActionError(String(err));
+    } finally {
+      setRejectingId(null);
+    }
+  };
+
+  const handleApproveAll = async (): Promise<void> => {
+    if (!workspace || approvingAll || pendingList.length === 0) return;
+    setApprovingAll(true);
+    setActionError(null);
+    try {
+      const existingList = await invoke<RelationsPayload>("relations_list", { root: workspace.root }).catch(() => null);
+      const updatedStates = [...proposalStates];
+
+      for (const p of pendingList) {
+        let effId = p.id;
+        if (!effId || effId <= 0) {
+          const existing = existingList?.proposals.find(
+            (item) => item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType,
+          );
+          if (existing && existing.id > 0) {
+            effId = existing.id;
+          } else {
+            const created = await invoke<RelationProposal>("relation_proposal_create", {
+              root: workspace.root,
+              input: {
+                sourcePath: p.sourcePath,
+                targetPath: p.targetPath,
+                relationType: p.relationType,
+                confidence: p.confidence,
+                rationale: p.rationale,
+                evidencePath: p.evidencePath || p.sourcePath,
+                evidenceStartLine: p.evidenceStartLine || 1,
+                evidenceEndLine: p.evidenceEndLine || 1,
+                evidenceText: p.evidenceText || null,
+              },
+            });
+            effId = created.id;
+          }
+        }
+        if (effId > 0) {
+          await invoke("relation_proposal_approve", { root: workspace.root, id: effId });
+        }
+        const idx = updatedStates.findIndex(
+          (item) => (p.id > 0 && item.id === p.id) || (item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType),
+        );
+        if (idx >= 0 && updatedStates[idx]) {
+          const current = updatedStates[idx]!;
+          updatedStates[idx] = { ...current, id: effId, status: "approved" };
+        }
+      }
+      setProposalStates(updatedStates);
+      setSuccessMessage(`已成功批准 ${pendingList.length} 条关系提案并更新图谱`);
+    } catch (err) {
+      setActionError(String(err));
+    } finally {
+      setApprovingAll(false);
+    }
+  };
+
+  const handleReanalyzeAll = (): void => {
+    if (onSendPrompt) {
+      const prompt = "请使用 document_list 和 document_read 工具全面阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具为发现的文档间依赖 (depends_on)、实现 (implements)、能力继承 (extends) 或重要语义引用关系创建带行号证据的关系提案。";
+      onSendPrompt(prompt);
+    }
+  };
+
+  const singleSource = proposalStates[0]?.sourcePath;
+  const isSingleSource = proposalStates.length > 0 && proposalStates.every((p) => p.sourcePath === singleSource);
+
+  const handleReanalyzeSource = (): void => {
+    if (onSendPrompt && singleSource) {
+      const prompt = `请针对文档 "${singleSource}"，深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`;
+      onSendPrompt(prompt);
+    }
+  };
+
+  return (
+    <div className={`msg-relation-group ${isAllResolved ? "resolved" : "pending"}`}>
+      <div className="msg-relation-group-header">
+        <div className="msg-relation-group-title">
+          <Icon name="network" size={16} />
+          <span className="msg-relation-title-text">
+            AI 挖掘关系提案
+          </span>
+          <span className="msg-relation-count-badge">
+            {pendingList.length > 0 ? `${pendingList.length} 条待审核` : `共 ${proposalStates.length} 条已处理`}
+          </span>
+        </div>
+        <div className="msg-relation-header-actions">
+          {pendingList.length > 1 && (
+            <button
+              className="primary-button small"
+              onClick={() => void handleApproveAll()}
+              disabled={approvingAll || approvingId !== null || rejectingId !== null}
+            >
+              <Icon name="check" size={12} />
+              {approvingAll ? "正在批准全部…" : `全部批准 (${pendingList.length})`}
+            </button>
+          )}
+          {onSendPrompt && (
+            <button
+              className="tool-button small"
+              onClick={isSingleSource ? handleReanalyzeSource : handleReanalyzeAll}
+              title="让 AI 重新扫描并分析文档关联"
+            >
+              <Icon name="spark" size={12} />
+              <span>再次分析</span>
+            </button>
+          )}
+          {onNavigateView && (
+            <button
+              className="tool-button small"
+              onClick={() => onNavigateView("relations")}
+              title="前往关系图谱查看拓扑网络"
+            >
+              <Icon name="network" size={12} />
+              <span>关系图谱</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {actionError && (
+        <div className="msg-error" style={{ margin: "6px 0" }}>
+          操作失败: {actionError}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="msg-draft-success">
+          <Icon name="check" size={14} /> {successMessage}
+        </div>
+      )}
+
+      <div className="msg-relation-list">
+        {proposalStates.map((p, idx) => {
+          const isPending = p.status === "pending";
+          const isApproved = p.status === "approved";
+          const isRejected = p.status === "rejected";
+          const isExpanded = expandedIdx === idx;
+          const busy = (approvingId === (p.id || idx + 1)) || (rejectingId === (p.id || idx + 1)) || approvingAll;
+
+          return (
+            <div key={p.id ? `p-${p.id}` : `idx-${idx}`} className={`msg-relation-item ${p.status}`}>
+              <div className="msg-relation-item-main">
+                <div className="msg-relation-item-route">
+                  <span className="msg-relation-doc-name" title={p.sourcePath}>{docName(p.sourcePath)}</span>
+                  <span className="msg-relation-arrow">→</span>
+                  <span className="msg-relation-doc-name" title={p.targetPath}>{docName(p.targetPath)}</span>
+                  <span className={`msg-relation-type-tag type-${p.relationType.replace(/[^a-zA-Z0-9]/g, "-")}`}>
+                    {prettyRelationType(p.relationType)}
+                  </span>
+                  <span className="msg-relation-conf-tag">
+                    置信度 {(p.confidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+
+                {p.rationale && (
+                  <div className="msg-relation-rationale">
+                    {p.rationale}
+                  </div>
+                )}
+
+                {(p.evidenceText || p.evidencePath) && (
+                  <div className="msg-relation-evidence-box">
+                    <div className="msg-relation-evidence-loc">
+                      <Icon name="file" size={11} />
+                      <code>{p.evidencePath}:{p.evidenceStartLine}-{p.evidenceEndLine}</code>
+                      {p.evidenceText && (
+                        <button
+                          type="button"
+                          className="msg-relation-expand-btn"
+                          onClick={() => setExpandedIdx(isExpanded ? null : idx)}
+                        >
+                          {isExpanded ? "收起证据" : "查看证据"}
+                        </button>
+                      )}
+                    </div>
+                    {isExpanded && p.evidenceText && (
+                      <div className="msg-relation-evidence-text">
+                        "{p.evidenceText}"
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="msg-relation-item-actions">
+                {isPending && (
+                  <>
+                    <button
+                      className="primary-button small"
+                      disabled={busy}
+                      onClick={() => void handleApprove(p, idx)}
+                    >
+                      <Icon name="check" size={12} />
+                      {approvingId === (p.id || idx + 1) ? "批准中…" : "批准入图"}
+                    </button>
+                    <button
+                      className="tool-button small"
+                      disabled={busy}
+                      onClick={() => void handleReject(p, idx)}
+                    >
+                      <Icon name="close" size={12} />
+                      {rejectingId === (p.id || idx + 1) ? "忽略中…" : "忽略"}
+                    </button>
+                  </>
+                )}
+                {isApproved && (
+                  <span className="msg-relation-status-badge approved">
+                    <Icon name="check" size={12} /> 已批准入图
+                  </span>
+                )}
+                {isRejected && (
+                  <span className="msg-relation-status-badge rejected">
+                    已忽略
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 interface AttachmentInfo {
   name: string;
   size: number;
@@ -113,6 +1048,8 @@ type LoadState<T> =
 type WorkspaceMode = "recent" | "open" | "create";
 
 const WORKSPACE_STORAGE_KEY = "llm-wiki.desktop.workspaces";
+const SIDEBAR_COLLAPSED_KEY = "llm-wiki.desktop.sidebar_collapsed";
+const SIDEBAR_WIDTH_KEY = "llm-wiki.desktop.sidebar_width";
 
 const previewWorkspace: WorkspaceInfo = {
   id: "preview",
@@ -172,6 +1109,13 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   arrowRight: (<><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></>),
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
   pin: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
+  list: (<><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></>),
+  tree: (<><path d="M17 19h4" /><path d="M9 19h4" /><path d="M17 5h4" /><path d="M9 5h4" /><path d="M9 12h12" /><path d="M5 3v18" /></>),
+  chevronRight: <polyline points="9 18 15 12 9 6" />,
+  chevronDown: <polyline points="6 9 12 15 18 9" />,
+  panelLeft: (<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /></>),
+  panelLeftClose: (<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /><polyline points="15 9 12 12 15 15" /></>),
+  panelLeftOpen: (<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /><polyline points="13 15 16 12 13 9" /></>),
 };
 
 function Icon({ name, size = 16, strokeWidth = 1.7, className }: { name: string; size?: number; strokeWidth?: number; className?: string }): React.ReactElement {
@@ -194,7 +1138,20 @@ const navigation: Array<{ id: View; label: string; icon: string }> = [
 
 export default function App(): React.ReactElement {
   const [view, setView] = useState<View>("chat");
-  const [sidebarWidth, setSidebarWidth] = useState(238);
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    try {
+      const val = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+      if (val >= 190 && val <= 420) return val;
+    } catch {}
+    return 238;
+  });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const [isResizing, setIsResizing] = useState(false);
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [knownWorkspaces, setKnownWorkspaces] = useState<WorkspaceInfo[]>([]);
@@ -208,6 +1165,32 @@ export default function App(): React.ReactElement {
   const [statsRefreshKey, setStatsRefreshKey] = useState(0);
   const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
   const [pendingDocFileId, setPendingDocFileId] = useState<number | null>(null);
+  const [pendingChatPrompt, setPendingChatPrompt] = useState<{
+    prompt: string;
+    autoSend?: boolean;
+    timestamp: number;
+  } | null>(null);
+
+  const handleAskAI = useCallback((prompt?: string, autoSend = false) => {
+    setPendingChatPrompt({
+      prompt: prompt ?? "",
+      autoSend,
+      timestamp: Date.now(),
+    });
+    setView("chat");
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isSidebarCollapsed));
+    } catch {}
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+    } catch {}
+  }, [sidebarWidth]);
 
   useEffect(() => {
     const stored = readStoredWorkspaces();
@@ -269,8 +1252,26 @@ export default function App(): React.ReactElement {
         focusSearch();
       }
     };
+    const onSidebarShortcut = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+        const target = event.target as HTMLElement | null;
+        const isInput = target && (
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable
+        );
+        if (!isInput) {
+          event.preventDefault();
+          setIsSidebarCollapsed((prev) => !prev);
+        }
+      }
+    };
     window.addEventListener("keydown", onSearchShortcut);
-    return () => window.removeEventListener("keydown", onSearchShortcut);
+    window.addEventListener("keydown", onSidebarShortcut);
+    return () => {
+      window.removeEventListener("keydown", onSearchShortcut);
+      window.removeEventListener("keydown", onSidebarShortcut);
+    };
   }, []);
 
   useEffect(() => {
@@ -294,7 +1295,21 @@ export default function App(): React.ReactElement {
   const rememberWorkspace = (value: WorkspaceInfo): void => {
     setWorkspace(value);
     setKnownWorkspaces((previous) => {
-      const next = [value, ...previous.filter((item) => item.id !== value.id)];
+      const next = [value, ...previous.filter((item) => item.id !== value.id)].slice(0, 8);
+      saveStoredWorkspaces(next);
+      return next;
+    });
+  };
+
+  const handleWorkspaceRenamed = (updated: { id?: string; title: string; root: string }): void => {
+    setWorkspace((prev) => {
+      if (!prev) return prev;
+      return { ...prev, title: updated.title };
+    });
+    setKnownWorkspaces((previous) => {
+      const next = previous.map((w) =>
+        w.root === updated.root || (updated.id && w.id === updated.id) ? { ...w, title: updated.title } : w
+      );
       saveStoredWorkspaces(next);
       return next;
     });
@@ -388,16 +1403,29 @@ export default function App(): React.ReactElement {
   };
 
   const resizeSidebar = (clientX: number): void => {
-    setSidebarWidth(Math.min(420, Math.max(190, clientX)));
+    if (clientX < 110) {
+      setIsSidebarCollapsed(true);
+    } else {
+      setIsSidebarCollapsed(false);
+      setSidebarWidth(Math.min(420, Math.max(190, clientX)));
+    }
   };
 
+  const currentSidebarWidth = isSidebarCollapsed ? 58 : sidebarWidth;
+
   return (
-    <main className={isResizing ? "desktop-shell is-resizing" : "desktop-shell"} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
+    <main className={isResizing ? "desktop-shell is-resizing" : "desktop-shell"} style={{ "--sidebar-width": `${currentSidebarWidth}px` } as React.CSSProperties}>
       <div className="body-grid">
-        <aside className="sidebar">
+        <aside className={isSidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}>
           <div className="sidebar-header">
             <div className="workspace-selector">
-              <button className="workspace-identity" aria-label="切换工作空间" aria-expanded={workspaceMenuOpen} onClick={() => { setWorkspaceMenuOpen((open) => !open); setWorkspaceError(null); }}>
+              <button
+                className="workspace-identity"
+                aria-label="切换工作空间"
+                title={isSidebarCollapsed ? (workspace?.title ?? "LLM Wiki") : undefined}
+                aria-expanded={workspaceMenuOpen}
+                onClick={() => { setWorkspaceMenuOpen((open) => !open); setWorkspaceError(null); }}
+              >
                 <span className="workspace-avatar">{workspace?.title.slice(0, 2) ?? "LW"}</span>
                 <span className="workspace-info-text">
                   <strong>{workspace?.title ?? "LLM Wiki"}</strong>
@@ -406,6 +1434,14 @@ export default function App(): React.ReactElement {
                 <Icon name="chevron" size={14} className="chevron-icon" />
               </button>
             </div>
+            <button
+              className="sidebar-collapse-btn"
+              onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+              title={isSidebarCollapsed ? "展开侧栏文字 (⌘B)" : "隐藏侧栏文字 (⌘B)"}
+              aria-label={isSidebarCollapsed ? "展开侧栏文字" : "隐藏侧栏文字"}
+            >
+              <Icon name={isSidebarCollapsed ? "panelLeftOpen" : "panelLeftClose"} size={16} />
+            </button>
           </div>
           <div className="nav-group">
             <span className="nav-label">工作台</span>
@@ -414,13 +1450,27 @@ export default function App(): React.ReactElement {
                 <button
                   className={view === item.id ? "nav-item active" : "nav-item"}
                   key={item.id}
+                  title={isSidebarCollapsed ? item.label : undefined}
                   onClick={() => { setView(item.id); setPendingDocFileId(null); }}
                 >
                   <span className="nav-item-icon"><Icon name={item.icon} size={15} /></span>
-                  {item.label}
+                  <span className="nav-item-label">{item.label}</span>
                 </button>
               ))}
             </nav>
+          </div>
+          <div className="sidebar-footer">
+            <button
+              className="nav-item sidebar-collapse-footer-btn"
+              onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+              title={isSidebarCollapsed ? "展开侧栏文字 (⌘B)" : "隐藏侧栏文字 (⌘B)"}
+              aria-label={isSidebarCollapsed ? "展开侧栏文字" : "隐藏侧栏文字"}
+            >
+              <span className="nav-item-icon">
+                <Icon name={isSidebarCollapsed ? "panelLeftOpen" : "panelLeftClose"} size={15} />
+              </span>
+              <span className="nav-item-label">{isSidebarCollapsed ? "展开侧栏" : "隐藏文字"}</span>
+            </button>
           </div>
         </aside>
 
@@ -431,7 +1481,7 @@ export default function App(): React.ReactElement {
           aria-orientation="vertical"
           aria-valuemin={190}
           aria-valuemax={420}
-          aria-valuenow={sidebarWidth}
+          aria-valuenow={currentSidebarWidth}
           tabIndex={0}
           onPointerDown={(event) => {
             event.preventDefault();
@@ -448,42 +1498,105 @@ export default function App(): React.ReactElement {
             setIsResizing(false);
           }}
           onPointerCancel={() => setIsResizing(false)}
-          onDoubleClick={() => setSidebarWidth(238)}
+          onDoubleClick={() => {
+            if (isSidebarCollapsed) {
+              setIsSidebarCollapsed(false);
+              if (sidebarWidth < 190) setSidebarWidth(238);
+            } else {
+              setIsSidebarCollapsed(true);
+            }
+          }}
           onKeyDown={(event) => {
-            if (event.key === "ArrowLeft") { event.preventDefault(); resizeSidebar(sidebarWidth - 12); }
-            if (event.key === "ArrowRight") { event.preventDefault(); resizeSidebar(sidebarWidth + 12); }
-            if (event.key === "Home") { event.preventDefault(); setSidebarWidth(190); }
-            if (event.key === "End") { event.preventDefault(); setSidebarWidth(420); }
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              if (isSidebarCollapsed) return;
+              if (sidebarWidth <= 190) {
+                setIsSidebarCollapsed(true);
+              } else {
+                resizeSidebar(sidebarWidth - 12);
+              }
+            }
+            if (event.key === "ArrowRight") {
+              event.preventDefault();
+              if (isSidebarCollapsed) {
+                setIsSidebarCollapsed(false);
+              } else {
+                resizeSidebar(sidebarWidth + 12);
+              }
+            }
+            if (event.key === "Home") {
+              event.preventDefault();
+              setIsSidebarCollapsed(true);
+            }
+            if (event.key === "End") {
+              event.preventDefault();
+              setIsSidebarCollapsed(false);
+              setSidebarWidth(420);
+            }
           }}
         />
 
         <section className="main-area">
-          <div className={view === "chat" || view === "documents" || view === "relations" || view === "settings" ? "content-pane documents-pane" : "content-pane"}>
-            {error && <div className="error-banner">Core 尚未连接：{error}</div>}
-            {view === "chat" && <ChatView workspace={workspace} focusTrigger={searchFocusTrigger} onOpenDocument={(fileId) => { setPendingDocFileId(fileId); setView("documents"); }} />}
-            {view === "documents" && (
-              <DocumentsView
-                workspace={workspace}
-                focusFileId={pendingDocFileId}
-                onAskAI={() => setView("chat")}
-                onOpenImports={() => setView("imports")}
-                onOpenSettings={() => setView("settings")}
-                onIndexed={() => setStatsRefreshKey((k) => k + 1)}
-              />
-            )}
-            {view === "relations" && (
-              <RelationsView
-                workspace={workspace}
-                onAskAI={() => setView("chat")}
-                onOpenDocuments={() => setView("documents")}
-                onIndexed={() => setStatsRefreshKey((k) => k + 1)}
-              />
-            )}
-            {view === "imports" && <ImportsView workspace={workspace} onImported={() => setStatsRefreshKey((k) => k + 1)} />}
-            {view === "drafts" && <DraftsView workspace={workspace} />}
-            {view === "tasks" && <TasksView workspace={workspace} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
-            {view === "settings" && <SettingsView workspace={workspace} kbStats={kbStats} knownWorkspaceCount={knownWorkspaces.length} onOpenWorkspaceMenu={() => setWorkspaceMenuOpen(true)} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
+          {error && <div className="error-banner">Core 尚未连接：{error}</div>}
+
+          {/* ChatView stays permanently mounted so ongoing agent responses are never aborted when switching tabs */}
+          <div
+            className="content-pane documents-pane"
+            style={{
+              display: view === "chat" ? "flex" : "none",
+              flexDirection: "column",
+              height: "100%",
+            }}
+          >
+            <ChatView
+              workspace={workspace}
+              focusTrigger={searchFocusTrigger}
+              initialPrompt={pendingChatPrompt}
+              onClearInitialPrompt={() => setPendingChatPrompt(null)}
+              onOpenDocument={(fileId) => {
+                setPendingDocFileId(fileId);
+                setView("documents");
+              }}
+              onNavigateView={setView}
+              onDraftApplied={() => setStatsRefreshKey((k) => k + 1)}
+            />
           </div>
+
+          {view !== "chat" && (
+            <div className={view === "documents" || view === "relations" || view === "settings" ? "content-pane documents-pane" : "content-pane"}>
+              {view === "documents" && (
+                <DocumentsView
+                  workspace={workspace}
+                  focusFileId={pendingDocFileId}
+                  onAskAI={handleAskAI}
+                  onOpenImports={() => setView("imports")}
+                  onOpenSettings={() => setView("settings")}
+                  onIndexed={() => setStatsRefreshKey((k) => k + 1)}
+                />
+              )}
+              {view === "relations" && (
+                <RelationsView
+                  workspace={workspace}
+                  onAskAI={handleAskAI}
+                  onOpenDocuments={() => setView("documents")}
+                  onIndexed={() => setStatsRefreshKey((k) => k + 1)}
+                />
+              )}
+              {view === "imports" && <ImportsView workspace={workspace} onImported={() => setStatsRefreshKey((k) => k + 1)} />}
+              {view === "drafts" && <DraftsView workspace={workspace} />}
+              {view === "tasks" && <TasksView workspace={workspace} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
+              {view === "settings" && (
+                <SettingsView
+                  workspace={workspace}
+                  kbStats={kbStats}
+                  knownWorkspaceCount={knownWorkspaces.length}
+                  onOpenWorkspaceMenu={() => setWorkspaceMenuOpen(true)}
+                  onIndexed={() => setStatsRefreshKey((k) => k + 1)}
+                  onWorkspaceRenamed={handleWorkspaceRenamed}
+                />
+              )}
+            </div>
+          )}
         </section>
       </div>
 
@@ -498,7 +1611,7 @@ export default function App(): React.ReactElement {
           )}
         </div>
         <div className="statusbar-center">
-          <span>⌘K 快速问答</span>
+          <span>⌘K 快速问答 · ⌘B 切换侧栏</span>
         </div>
         <div className="statusbar-right">
           <span className="statusbar-pill">Rust Core</span>
@@ -667,10 +1780,18 @@ function ChatView({
   workspace,
   focusTrigger,
   onOpenDocument,
+  onNavigateView,
+  onDraftApplied,
+  initialPrompt,
+  onClearInitialPrompt,
 }: {
   workspace: WorkspaceInfo | null;
   focusTrigger: number;
   onOpenDocument: (fileId: number) => void;
+  onNavigateView?: (view: View) => void;
+  onDraftApplied?: () => void;
+  initialPrompt?: { prompt: string; autoSend?: boolean; timestamp?: number } | null;
+  onClearInitialPrompt?: () => void;
 }): React.ReactElement {
   const {
     sessions,
@@ -684,6 +1805,7 @@ function ChatView({
     error: agentError,
     selectSession,
     sendMessage,
+    startNewChat,
     cancelPrompt,
     deleteSession,
     togglePin,
@@ -762,6 +1884,52 @@ function ChatView({
     await sendMessage(text, selectedModelConfig);
   };
 
+  const handleDeleteSession = async (sessionId: string, sessionTitle?: string): Promise<void> => {
+    const titleText = sessionTitle?.trim();
+    const msg = titleText
+      ? `确定要删除对话「${titleText}」吗？\n此操作将永久移除该对话记录，无法撤销。`
+      : "确定要删除该对话吗？\n此操作将永久移除该对话记录，无法撤销。";
+
+    let confirmed = false;
+    if (inTauriRuntime()) {
+      try {
+        confirmed = await confirmDialog(msg, {
+          title: "删除对话确认",
+          kind: "warning",
+          okLabel: "确定删除",
+          cancelLabel: "取消",
+        });
+      } catch {
+        confirmed = window.confirm(msg);
+      }
+    } else {
+      confirmed = window.confirm(msg);
+    }
+
+    if (!confirmed) return;
+    await deleteSession(sessionId);
+  };
+
+  useEffect(() => {
+    if (initialPrompt) {
+      const promptText = (initialPrompt.prompt || "").trim();
+      void startNewChat(promptText, Boolean(initialPrompt.autoSend), selectedModelConfig);
+      if (!initialPrompt.autoSend) {
+        setQuery(promptText);
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            const len = promptText.length;
+            textareaRef.current.setSelectionRange(len, len);
+          }
+        }, 50);
+      } else {
+        setQuery("");
+      }
+      onClearInitialPrompt?.();
+    }
+  }, [initialPrompt, startNewChat, selectedModelConfig, onClearInitialPrompt]);
+
   const visibleSessions = useMemo(() => {
     const q = filterQuery.trim().toLowerCase();
     const now = new Date();
@@ -808,7 +1976,8 @@ function ChatView({
                 className="lib-icon-btn"
                 title="新建对话"
                 onClick={() => {
-                  selectSession(null);
+                  void startNewChat();
+                  setQuery("");
                   textareaRef.current?.focus();
                 }}
               >
@@ -872,7 +2041,7 @@ function ChatView({
                       aria-label={`删除对话 ${s.title}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void deleteSession(s.sessionId);
+                        void handleDeleteSession(s.sessionId, s.title);
                       }}
                     >
                       <Icon name="trash" size={13} />
@@ -912,7 +2081,7 @@ function ChatView({
               </button>
               <button
                 className="tool-button"
-                onClick={() => void deleteSession(activeSession.sessionId)}
+                onClick={() => void handleDeleteSession(activeSession.sessionId, activeSession.title)}
               >
                 <Icon name="trash" size={13} />
                 <span>删除</span>
@@ -980,6 +2149,30 @@ function ChatView({
                   <Icon name="terminal" size={12} />
                   检索 API 与接口设计
                 </button>
+                <button
+                  type="button"
+                  className="prompt-chip"
+                  onClick={() => {
+                    const prompt = "请深度阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具挖掘文档之间的逻辑依赖、实现关系和语义引用，并生成带行号证据的关系提案。";
+                    setQuery(prompt);
+                    void handleSend(prompt);
+                  }}
+                >
+                  <Icon name="network" size={12} />
+                  深度分析文档关系图谱
+                </button>
+                <button
+                  type="button"
+                  className="prompt-chip"
+                  onClick={() => {
+                    const prompt = "为当前知识库起草一份系统概述文档，并创建为草稿 wiki/overview.md";
+                    setQuery(prompt);
+                    void handleSend(prompt);
+                  }}
+                >
+                  <Icon name="draft" size={12} />
+                  起草系统概述文档并生成草稿
+                </button>
               </div>
             </div>
           ) : (
@@ -988,15 +2181,25 @@ function ChatView({
                 <p className="msg-status">正在加载会话记录…</p>
               ) : (
                 <>
-                  {messages.map((m) =>
-                    m.role === "user" ? (
-                      <div className="msg-user" key={m.id}>
-                        <div className="msg-user-bubble">{m.text}</div>
-                      </div>
-                    ) : (
-                      <AssistantMessage key={m.id} message={m} onOpenDocument={onOpenDocument} />
-                    ),
-                  )}
+                  {messages
+                    .filter((m) => m.role === "user" || m.role === "assistant")
+                    .map((m) =>
+                      m.role === "user" ? (
+                        <div className="msg-user" key={m.id}>
+                          <div className="msg-user-bubble">{m.text}</div>
+                        </div>
+                      ) : (
+                        <AssistantMessage
+                          key={m.id}
+                          message={m}
+                          workspace={workspace}
+                          onOpenDocument={onOpenDocument}
+                          onNavigateView={onNavigateView}
+                          onDraftApplied={onDraftApplied}
+                          onSendPrompt={(prompt) => void handleSend(prompt)}
+                        />
+                      ),
+                    )}
 
                   {sending && (
                     <div className="msg-assistant">
@@ -1026,7 +2229,17 @@ function ChatView({
                                 }
                                 title={JSON.stringify(tool.args)}
                               >
-                                <Icon name="settings" size={12} /> {tool.toolName} {tool.result === undefined ? "…" : "✓"}
+                                <Icon
+                                  name={
+                                    tool.toolName === "document_draft_create"
+                                      ? "draft"
+                                      : tool.toolName.startsWith("relation_proposal")
+                                        ? "network"
+                                        : "settings"
+                                  }
+                                  size={12}
+                                />{" "}
+                                {tool.toolName} {tool.result === undefined ? "…" : "✓"}
                               </span>
                             ))}
                           </div>
@@ -1064,7 +2277,7 @@ function ChatView({
                   void handleSend();
                 }
               }}
-              disabled={!workspace}
+              disabled={!workspace || sending}
             />
             <div className="composer-toolbar">
               <div className="composer-toolbar-left">
@@ -1128,11 +2341,31 @@ function ChatView({
 
 const AssistantMessage = memo(function AssistantMessage({
   message,
-  onOpenDocument: _onOpenDocument,
+  workspace,
+  onOpenDocument,
+  onNavigateView,
+  onDraftApplied,
+  onSendPrompt,
 }: {
   message: ChatMessageItem;
+  workspace: WorkspaceInfo | null;
   onOpenDocument: (fileId: number) => void;
+  onNavigateView?: (view: View) => void;
+  onDraftApplied?: () => void;
+  onSendPrompt?: (prompt: string) => void;
 }): React.ReactElement {
+  const draftTools = (message.toolCalls ?? []).filter((t) => t.toolName === "document_draft_create");
+  const relationProposals = useMemo(() => extractRelationProposals(message), [message]);
+
+  // Check if message.text itself is a JSON representation of a draft (e.g. from historical session or raw tool output)
+  const textAsDraft = useMemo(() => {
+    if (draftTools.length > 0) return null;
+    if (!message.text || !message.text.trim().startsWith("{")) return null;
+    return parseDraftResult(message.text.trim());
+  }, [draftTools.length, message.text]);
+
+  const showText = message.text && !textAsDraft;
+
   return (
     <div className="msg-assistant">
       <div className="msg-avatar">
@@ -1153,16 +2386,63 @@ const AssistantMessage = memo(function AssistantMessage({
                 className={tool.isError ? "msg-tool-pill error" : "msg-tool-pill"}
                 title={JSON.stringify(tool.args)}
               >
-                <Icon name="settings" size={12} /> {tool.toolName}
+                <Icon
+                  name={
+                    tool.toolName === "document_draft_create"
+                      ? "draft"
+                      : tool.toolName.startsWith("relation_proposal")
+                        ? "network"
+                        : "settings"
+                  }
+                  size={12}
+                />{" "}
+                {tool.toolName}
               </span>
             ))}
           </div>
         )}
-        {message.text ? (
+
+        {draftTools.map((tool) => (
+          <DraftCard
+            key={tool.toolCallId}
+            tool={tool}
+            workspace={workspace}
+            onNavigateView={onNavigateView}
+            onDraftApplied={onDraftApplied}
+            onOpenDocument={onOpenDocument}
+          />
+        ))}
+
+        {textAsDraft && (
+          <DraftCard
+            tool={{
+              toolCallId: `text-draft-${message.id}`,
+              toolName: "document_draft_create",
+              args: {},
+              result: textAsDraft,
+            }}
+            workspace={workspace}
+            onNavigateView={onNavigateView}
+            onDraftApplied={onDraftApplied}
+            onOpenDocument={onOpenDocument}
+          />
+        )}
+
+        {relationProposals.length > 0 && (
+          <RelationProposalsCard
+            proposals={relationProposals}
+            workspace={workspace}
+            onNavigateView={onNavigateView}
+            onSendPrompt={onSendPrompt}
+            onOpenDocument={onOpenDocument}
+          />
+        )}
+
+        {showText ? (
           <div className="msg-pi-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
           </div>
-        ) : !message.thinking ? (
+        ) : !message.thinking && draftTools.length === 0 && !textAsDraft && relationProposals.length === 0 ? (
           <p className="msg-status">未返回文本输出。</p>
         ) : null}
         {message.errorMessage && (
@@ -1229,12 +2509,6 @@ function splitFrontMatter(markdown: string): { title: string | null; subtitle: s
     if (descMatch && descMatch[1]) subtitle = descMatch[1].trim();
   }
   return { title, subtitle, body };
-}
-
-function docName(path: string): string {
-  const clean = path.replace(/\\/g, "/");
-  const file = clean.split("/").pop() ?? clean;
-  return file.replace(/\.[^.]+$/, "");
 }
 
 function parentLabel(path: string): string {
@@ -1403,7 +2677,7 @@ function DocumentsView({
   focusFileId = null,
 }: {
   workspace: WorkspaceInfo | null;
-  onAskAI: () => void;
+  onAskAI?: (prompt?: string, autoSend?: boolean) => void;
   onOpenImports: () => void;
   onOpenSettings: () => void;
   onIndexed: () => void;
@@ -1432,7 +2706,11 @@ function DocumentsView({
       .then((data) => {
         if (!cancelled) {
           setPage({ status: "ready", data });
-          setSelectedId(focusFileId);
+          setSelectedId((prev) => {
+            if (focusFileId !== null && focusFileId !== undefined) return focusFileId;
+            if (prev !== null && data.files.some((f) => f.id === prev)) return prev;
+            return data.files[0]?.id ?? null;
+          });
         }
       })
       .catch((reason: unknown) => {
@@ -1448,10 +2726,48 @@ function DocumentsView({
       })
       .catch(() => {});
 
+    // Perform an incremental scan pass to detect any disk structure or file changes
+    void invoke<IndexStats>("index_run", { root: workspace.root, reset: false })
+      .then((stats) => {
+        if (cancelled) return;
+        if (stats.added > 0 || stats.updated > 0 || stats.deleted > 0) {
+          onIndexed();
+          void invoke<KbFileListPage>("documents_list", { root: workspace.root }).then((data) => {
+            if (!cancelled) {
+              setPage({ status: "ready", data });
+              setSelectedId((prev) => {
+                if (focusFileId !== null && focusFileId !== undefined) return focusFileId;
+                if (prev !== null && data.files.some((f) => f.id === prev)) return prev;
+                return data.files[0]?.id ?? null;
+              });
+            }
+          });
+        }
+      })
+      .catch(() => {});
+
     return () => {
       cancelled = true;
     };
   }, [workspace, docReloadKey, focusFileId]);
+
+  useEffect(() => {
+    if (!workspace || !inTauriRuntime()) return;
+    const handleFocus = () => {
+      void invoke<IndexStats>("index_run", { root: workspace.root, reset: false })
+        .then((stats) => {
+          if (stats.added > 0 || stats.updated > 0 || stats.deleted > 0) {
+            onIndexed();
+            setDocReloadKey((k) => k + 1);
+          }
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [workspace, onIndexed]);
 
   useEffect(() => {
     if (selectedId === null || !workspace) {
@@ -1472,7 +2788,7 @@ function DocumentsView({
     return () => {
       cancelled = true;
     };
-  }, [workspace, selectedId]);
+  }, [workspace, selectedId, docReloadKey]);
 
   const runIndex = async (reset = false): Promise<void> => {
     if (!workspace || !inTauriRuntime() || indexing) return;
@@ -1481,7 +2797,22 @@ function DocumentsView({
     setIndexFeedback(null);
     try {
       const stats = await invoke<IndexStats>("index_run", { root: workspace.root, reset });
-      setIndexFeedback(`索引完成：扫描 ${stats.scanned} 篇，新增 ${stats.added} 篇，更新 ${stats.updated} 篇，切片 ${stats.chunks} 个`);
+      const data = await invoke<KbFileListPage>("documents_list", { root: workspace.root, pageSize: 1000 });
+      setPage({ status: "ready", data });
+      setSelectedId((prev) => {
+        if (focusFileId !== null && focusFileId !== undefined) return focusFileId;
+        if (prev !== null && data.files.some((f) => f.id === prev)) return prev;
+        return data.files[0]?.id ?? null;
+      });
+      const parts: string[] = [`扫描 ${stats.scanned} 篇`];
+      if (stats.added > 0) parts.push(`新增 ${stats.added} 篇`);
+      if (stats.updated > 0) parts.push(`更新 ${stats.updated} 篇`);
+      if (stats.deleted > 0) parts.push(`删除 ${stats.deleted} 篇`);
+      if (stats.skipped > 0 && stats.added === 0 && stats.updated === 0 && stats.deleted === 0) {
+        parts.push(`未变动 ${stats.skipped} 篇`);
+      }
+      parts.push(`切片 ${stats.chunks} 个`);
+      setIndexFeedback(`索引完成：${parts.join("，")}`);
       onIndexed();
       setDocReloadKey((k) => k + 1);
       setTimeout(() => setIndexFeedback(null), 5000);
@@ -1528,8 +2859,33 @@ function DocumentsView({
     void saveIncludeDirs(next, reindexAfter);
   };
 
-  if (page.status === "loading") return <div className="empty-state"><div className="hero-icon"><Icon name="file" size={24} /></div><h2>加载文档列表中…</h2></div>;
-  if (page.status === "error") return <div className="empty-state"><div className="hero-icon"><Icon name="file" size={24} /></div><h2>无法加载文档</h2><p>{page.message}</p></div>;
+  if (page.status === "loading") {
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon">
+            <Icon name="refresh" size={28} className="spin" />
+          </div>
+          <h2>加载文档列表中…</h2>
+          <p className="doc-empty-desc">正在读取工作区文档索引与目录结构，请稍候</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (page.status === "error") {
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+            <Icon name="close" size={28} />
+          </div>
+          <h2>无法加载文档</h2>
+          <p className="doc-empty-desc">{page.message}</p>
+        </div>
+      </div>
+    );
+  }
 
   const list = page.data;
   if (list.total === 0) {
@@ -1579,6 +2935,153 @@ function DocumentsView({
   );
 }
 
+interface FileTreeNode {
+  id: string;
+  name: string;
+  path: string;
+  isDir: boolean;
+  file?: KbFileSummary;
+  children: FileTreeNode[];
+  fileCount: number;
+}
+
+function buildFileTree(files: KbFileSummary[]): FileTreeNode[] {
+  const rootNodes: FileTreeNode[] = [];
+
+  for (const file of files) {
+    const parts = file.path.split("/").filter(Boolean);
+    let currentLevel = rootNodes;
+    let currentPath = "";
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i] ?? "";
+      if (!part) continue;
+      const isLast = i === parts.length - 1;
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+
+      if (isLast) {
+        currentLevel.push({
+          id: `file-${file.id}`,
+          name: part,
+          path: file.path,
+          isDir: false,
+          file,
+          children: [],
+          fileCount: 1,
+        });
+      } else {
+        let dirNode = currentLevel.find((n) => n.isDir && n.name === part);
+        if (!dirNode) {
+          const newNode: FileTreeNode = {
+            id: `dir-${currentPath}`,
+            name: part,
+            path: currentPath,
+            isDir: true,
+            children: [],
+            fileCount: 0,
+          };
+          currentLevel.push(newNode);
+          dirNode = newNode;
+        }
+        dirNode.fileCount += 1;
+        currentLevel = dirNode.children;
+      }
+    }
+  }
+
+  function sortTree(nodes: FileTreeNode[]) {
+    nodes.sort((a, b) => {
+      if (a.isDir && !b.isDir) return -1;
+      if (!a.isDir && b.isDir) return 1;
+      return a.name.localeCompare(b.name, "zh-CN");
+    });
+    for (const node of nodes) {
+      if (node.isDir && node.children.length > 0) {
+        sortTree(node.children);
+      }
+    }
+  }
+  sortTree(rootNodes);
+  return rootNodes;
+}
+
+function TreeViewNode({
+  node,
+  depth,
+  selectedId,
+  onSelect,
+  collapsedDirs,
+  onToggleDir,
+}: {
+  node: FileTreeNode;
+  depth: number;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  collapsedDirs: Set<string>;
+  onToggleDir: (path: string) => void;
+}): React.ReactElement {
+  const isCollapsed = collapsedDirs.has(node.path);
+
+  if (node.isDir) {
+    return (
+      <div className="tree-dir-group">
+        <div
+          className="tree-dir-item"
+          style={{ paddingLeft: `${8 + depth * 14}px` }}
+          onClick={() => onToggleDir(node.path)}
+        >
+          <span className="tree-chevron">
+            <Icon name={isCollapsed ? "chevronRight" : "chevronDown"} size={12} />
+          </span>
+          <span className="tree-icon folder">
+            <Icon name="folder" size={14} />
+          </span>
+          <span className="tree-name dir-name" title={node.path}>{node.name}</span>
+          <span className="tree-badge">{node.fileCount}</span>
+        </div>
+        {!isCollapsed && (
+          <div className="tree-children">
+            {node.children.map((child) => (
+              <TreeViewNode
+                key={child.id}
+                node={child}
+                depth={depth + 1}
+                selectedId={selectedId}
+                onSelect={onSelect}
+                collapsedDirs={collapsedDirs}
+                onToggleDir={onToggleDir}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const file = node.file!;
+  const isActive = file.id === selectedId;
+
+  return (
+    <div
+      className={`tree-file-item ${isActive ? "active" : ""}`}
+      style={{ paddingLeft: `${8 + depth * 14}px` }}
+      onClick={() => onSelect(file.id)}
+      title={file.path}
+    >
+      <span className="tree-file-spacer" />
+      <span className="tree-icon file">
+        <Icon name="file" size={13} />
+      </span>
+      <div className="tree-file-info">
+        <span className="tree-name file-name">{node.name}</span>
+        <span className="tree-file-meta">
+          {(file.size / 1024).toFixed(1)} KB
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Library({
   files,
   total,
@@ -1605,12 +3108,34 @@ function Library({
   indexFeedback: string | null;
 }): React.ReactElement {
   const [filterQuery, setFilterQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "tree">(() => {
+    return (localStorage.getItem("llm-wiki.doc-view-mode") as "list" | "tree") || "tree";
+  });
+  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
+
+  const handleViewModeChange = (mode: "list" | "tree") => {
+    setViewMode(mode);
+    localStorage.setItem("llm-wiki.doc-view-mode", mode);
+  };
+
+  const toggleDir = (path: string) => {
+    setCollapsedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
 
   const filteredFiles = useMemo(() => {
     const q = filterQuery.trim().toLowerCase();
     if (!q) return files;
     return files.filter((f) => f.path.toLowerCase().includes(q));
   }, [files, filterQuery]);
+
+  const treeData = useMemo(() => {
+    return buildFileTree(filteredFiles);
+  }, [filteredFiles]);
 
   return (
     <aside className="library">
@@ -1621,6 +3146,26 @@ function Library({
             <span className="section-count">{total}</span>
           </div>
           <div className="small-actions">
+            <div className="lib-mode-switch">
+              <button
+                type="button"
+                className={`lib-mode-btn ${viewMode === "tree" ? "active" : ""}`}
+                title="树形结构展示"
+                onClick={() => handleViewModeChange("tree")}
+              >
+                <Icon name="tree" size={13} />
+                <span>树形</span>
+              </button>
+              <button
+                type="button"
+                className={`lib-mode-btn ${viewMode === "list" ? "active" : ""}`}
+                title="平铺列表展示"
+                onClick={() => handleViewModeChange("list")}
+              >
+                <Icon name="list" size={13} />
+                <span>列表</span>
+              </button>
+            </div>
             <button
               className="lib-icon-btn"
               title="重新扫描索引"
@@ -1652,6 +3197,20 @@ function Library({
         {filteredFiles.length === 0 ? (
           <div style={{ textAlign: "center", padding: "30px 14px", color: "var(--text-muted)", fontSize: "12px" }}>
             无匹配文档
+          </div>
+        ) : viewMode === "tree" ? (
+          <div className="doc-tree-root">
+            {treeData.map((node) => (
+              <TreeViewNode
+                key={node.id}
+                node={node}
+                depth={0}
+                selectedId={selectedId}
+                onSelect={onSelect}
+                collapsedDirs={collapsedDirs}
+                onToggleDir={toggleDir}
+              />
+            ))}
           </div>
         ) : (
           filteredFiles.map((file) => (
@@ -1687,7 +3246,7 @@ function ReaderShell({
 }: {
   file: KbFileSummary | null;
   content: LoadState<KbFileContent>;
-  onAskAI: () => void;
+  onAskAI?: (prompt?: string, autoSend?: boolean) => void;
 }): React.ReactElement {
   const [viewMode, setViewMode] = useState<"render" | "source">("render");
   const [copied, setCopied] = useState(false);
@@ -1713,11 +3272,11 @@ function ReaderShell({
 
   if (!file) {
     return (
-      <section className="reader-shell">
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)", textAlign: "center" }}>
-          <div className="hero-icon"><Icon name="file" size={24} /></div>
-          <h3 style={{ margin: "0 0 6px", color: "var(--text-main)", fontSize: "16px" }}>选择左侧文档查看详情</h3>
-          <p style={{ margin: 0, fontSize: "13px" }}>支持 Markdown 实时渲染与结构化大纲导航</p>
+      <section className="reader-shell empty">
+        <div className="reader-empty-center">
+          <div className="hero-icon"><Icon name="file" size={26} /></div>
+          <h3>选择左侧文档查看详情</h3>
+          <p>支持 Markdown 实时渲染与结构化大纲导航</p>
         </div>
       </section>
     );
@@ -1749,7 +3308,16 @@ function ReaderShell({
           <Icon name={copied ? "check" : "copy"} size={13} />
           <span>{copied ? "已复制" : "复制"}</span>
         </button>
-        <button className="tool-button primary" onClick={onAskAI}>
+        <button
+          className="tool-button primary"
+          onClick={() => {
+            if (file) {
+              onAskAI?.(`请结合文档 "${file.path}" 的内容，详细解答：`, false);
+            } else {
+              onAskAI?.();
+            }
+          }}
+        >
           <Icon name="spark" size={13} />
           <span>向 AI 提问本文档</span>
         </button>
@@ -1757,12 +3325,16 @@ function ReaderShell({
 
       <div className="reader-scroll">
         {content.status === "loading" ? (
-          <div style={{ textAlign: "center", padding: "60px", color: "var(--text-muted)", fontSize: "13px" }}>
-            正在读取文档内容…
+          <div className="reader-empty-center" style={{ margin: "60px auto" }}>
+            <div className="hero-icon"><Icon name="refresh" size={24} className="spin" /></div>
+            <h3>正在读取文档内容…</h3>
+            <p>正在解析 Markdown 文档并提取结构化大纲</p>
           </div>
         ) : content.status === "error" ? (
-          <div style={{ textAlign: "center", padding: "60px", color: "var(--danger)", fontSize: "13px" }}>
-            {content.message}
+          <div className="reader-empty-center" style={{ margin: "60px auto" }}>
+            <div className="hero-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}><Icon name="close" size={24} /></div>
+            <h3>无法读取文档内容</h3>
+            <p>{content.message}</p>
           </div>
         ) : viewMode === "source" ? (
           <div style={{ padding: "24px", maxWidth: "960px", margin: "0 auto" }}>
@@ -2012,18 +3584,12 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
 }
 
 // --- Drafts View (Full Desktop 2-column Review Layout) ---
-const OPERATION_LABELS: Record<string, string> = {
-  create: "新建文档",
-  append: "追加内容",
-  update_section: "更新章节",
-  overwrite: "覆盖文档",
-};
-
 function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.ReactElement {
   const [drafts, setDrafts] = useState<LoadState<Draft[]>>({ status: "loading" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
 
   useEffect(() => {
     if (!workspace || !inTauriRuntime()) {
@@ -2076,8 +3642,69 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     }
   };
 
-  if (drafts.status === "loading") return <div className="empty-state"><div className="hero-icon"><Icon name="draft" size={24} /></div><h2>加载草稿列表中…</h2></div>;
-  if (drafts.status === "error") return <div className="empty-state"><div className="hero-icon"><Icon name="draft" size={24} /></div><h2>无法加载草稿</h2><p>{drafts.message}</p></div>;
+  const deleteDraft = async (draftId: string, targetPath?: string): Promise<void> => {
+    if (!workspace) return;
+    const msg = targetPath
+      ? `确定要删除草稿「${targetPath}」吗？\n此操作将永久移除该草稿，无法撤销。`
+      : "确定要删除该草稿吗？\n此操作将永久移除该草稿，无法撤销。";
+
+    let confirmed = false;
+    if (inTauriRuntime()) {
+      try {
+        confirmed = await confirmDialog(msg, {
+          title: "删除草稿确认",
+          kind: "warning",
+          okLabel: "确定删除",
+          cancelLabel: "取消",
+        });
+      } catch {
+        confirmed = window.confirm(msg);
+      }
+    } else {
+      confirmed = window.confirm(msg);
+    }
+
+    if (!confirmed) return;
+
+    setActionError(null);
+    try {
+      await invoke<boolean>("draft_delete", { root: workspace.root, draftId });
+      if (selectedId === draftId) {
+        setSelectedId(null);
+      }
+      refresh();
+    } catch (reason: unknown) {
+      setActionError(String(reason));
+    }
+  };
+
+  if (drafts.status === "loading") {
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon">
+            <Icon name="refresh" size={28} className="spin" />
+          </div>
+          <h2>加载草稿列表中…</h2>
+          <p className="doc-empty-desc">正在读取待确认写入草稿，请稍候</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (drafts.status === "error") {
+    return (
+      <div className="doc-empty-container">
+        <div className="doc-empty-card">
+          <div className="doc-empty-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+            <Icon name="close" size={28} />
+          </div>
+          <h2>无法加载草稿</h2>
+          <p className="doc-empty-desc">{drafts.message}</p>
+        </div>
+      </div>
+    );
+  }
 
   const list = drafts.data;
   const pending = list.filter((d) => d.status === "pending");
@@ -2103,12 +3730,20 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
           <strong>写入草稿 ({pending.length} 待确认 / {list.length} 总数)</strong>
         </div>
         {list.map((draft) => (
-          <button
-            className={draft.draftId === selectedId ? "file-item selected" : "file-item"}
+          <div
+            className={draft.draftId === selectedId ? "draft-item selected" : "draft-item"}
             key={draft.draftId}
             onClick={() => {
               setSelectedId(draft.draftId);
               setActionError(null);
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                setSelectedId(draft.draftId);
+                setActionError(null);
+              }
             }}
           >
             <Icon name="draft" size={15} />
@@ -2119,7 +3754,18 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
                 {" · "}{OPERATION_LABELS[draft.operationType] ?? draft.operationType}
               </div>
             </div>
-          </button>
+            <button
+              className="draft-item-delete"
+              title="删除草稿"
+              aria-label={`删除草稿 ${draft.targetPath}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void deleteDraft(draft.draftId, draft.targetPath);
+              }}
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
         ))}
       </div>
 
@@ -2156,18 +3802,101 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
                   <Icon name="close" size={14} />
                   拒绝草稿
                 </button>
+                <button
+                  className="tool-button"
+                  style={{ color: "var(--danger)" }}
+                  onClick={() => void deleteDraft(selectedDraft.draftId, selectedDraft.targetPath)}
+                  title="删除此草稿"
+                >
+                  <Icon name="trash" size={14} />
+                  删除草稿
+                </button>
               </div>
             ) : (
-              <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--bg-surface-muted)", color: "var(--text-secondary)", fontSize: "12px", margin: "14px 0" }}>
-                该草稿已完成处理 ({selectedDraft.status})。
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderRadius: "8px", background: "var(--bg-surface-muted)", color: "var(--text-secondary)", fontSize: "12.5px", margin: "14px 0" }}>
+                <span>该草稿已完成处理 ({selectedDraft.status === "applied" ? "已生效" : selectedDraft.status === "rejected" ? "已拒绝" : selectedDraft.status})。</span>
+                <button
+                  className="tool-button small"
+                  style={{ color: "var(--danger)" }}
+                  onClick={() => void deleteDraft(selectedDraft.draftId, selectedDraft.targetPath)}
+                  title="删除此草稿记录"
+                >
+                  <Icon name="trash" size={13} />
+                  删除草稿
+                </button>
               </div>
             )}
 
             <div style={{ marginTop: "20px" }}>
-              <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 8px" }}>生成内容预览</h3>
-              <pre style={{ margin: 0, padding: "16px", borderRadius: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", maxHeight: "480px", overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "var(--app-font-mono)", fontSize: "12.5px", lineHeight: "1.6" }}>
-                {selectedDraft.generatedContent}
-              </pre>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+                <h3 style={{ fontSize: "15px", fontWeight: 700, margin: 0 }}>生成内容预览</h3>
+                <div style={{ display: "inline-flex", background: "var(--bg-surface-subtle)", padding: "2px", borderRadius: "8px", border: "1px solid var(--border-subtle)" }}>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode("preview")}
+                    style={{
+                      padding: "4px 12px",
+                      fontSize: "12px",
+                      borderRadius: "6px",
+                      border: "none",
+                      background: previewMode === "preview" ? "var(--bg-surface)" : "transparent",
+                      color: previewMode === "preview" ? "var(--text-main)" : "var(--text-muted)",
+                      fontWeight: previewMode === "preview" ? 600 : 400,
+                      boxShadow: previewMode === "preview" ? "var(--shadow-xs)" : "none",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                    }}
+                  >
+                    <Icon name="file" size={13} />
+                    渲染预览
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode("source")}
+                    style={{
+                      padding: "4px 12px",
+                      fontSize: "12px",
+                      borderRadius: "6px",
+                      border: "none",
+                      background: previewMode === "source" ? "var(--bg-surface)" : "transparent",
+                      color: previewMode === "source" ? "var(--text-main)" : "var(--text-muted)",
+                      fontWeight: previewMode === "source" ? 600 : 400,
+                      boxShadow: previewMode === "source" ? "var(--shadow-xs)" : "none",
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                    }}
+                  >
+                    <Icon name="terminal" size={13} />
+                    源码模式
+                  </button>
+                </div>
+              </div>
+
+              {previewMode === "preview" ? (
+                <div
+                  className="article-body"
+                  style={{
+                    padding: "20px 24px",
+                    borderRadius: "10px",
+                    background: "var(--bg-surface-subtle)",
+                    border: "1px solid var(--border-subtle)",
+                    maxHeight: "520px",
+                    overflowY: "auto",
+                  }}
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {selectedDraft.generatedContent}
+                  </ReactMarkdown>
+                </div>
+              ) : (
+                <pre style={{ margin: 0, padding: "16px", borderRadius: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", maxHeight: "520px", overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "var(--app-font-mono)", fontSize: "12.5px", lineHeight: "1.6" }}>
+                  {selectedDraft.generatedContent}
+                </pre>
+              )}
             </div>
           </div>
         )}

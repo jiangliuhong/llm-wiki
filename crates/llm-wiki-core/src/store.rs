@@ -13,9 +13,10 @@
 
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use crate::document_parser::normalize_relation_type;
 use crate::CoreError;
 
 /// Directory name (relative to the workspace root) holding the index DB.
@@ -156,6 +157,28 @@ pub struct RelationProposal {
     pub created_at: String,
     #[serde(rename = "reviewedAt")]
     pub reviewed_at: Option<String>,
+}
+
+/// Input for creating a new relation proposal.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelationProposalCreateInput {
+    #[serde(rename = "sourcePath")]
+    pub source_path: String,
+    #[serde(rename = "targetPath")]
+    pub target_path: String,
+    #[serde(rename = "relationType")]
+    pub relation_type: String,
+    pub confidence: f64,
+    pub rationale: String,
+    #[serde(rename = "evidencePath")]
+    pub evidence_path: String,
+    #[serde(rename = "evidenceStartLine")]
+    pub evidence_start_line: i64,
+    #[serde(rename = "evidenceEndLine")]
+    pub evidence_end_line: i64,
+    #[serde(rename = "evidenceText")]
+    pub evidence_text: Option<String>,
 }
 
 /// Evidence backing a published relation. Mirrors `RelationEvidence`.
@@ -417,7 +440,7 @@ impl SqliteStore {
     /// Paginated file list with optional path LIKE filter.
     pub fn list_files(&self, options: ListFilesOptions) -> Result<KbFileListPage, CoreError> {
         let page = options.page.unwrap_or(1).max(1);
-        let page_size = options.page_size.unwrap_or(50).clamp(1, 200);
+        let page_size = options.page_size.unwrap_or(1000).clamp(1, 10000);
         let q = options.q.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
 
         let Some(conn) = self.connect()? else {
@@ -643,6 +666,220 @@ impl SqliteStore {
         Ok(out)
     }
 
+    /// Creates a new pending relation proposal.
+    pub fn create_relation_proposal(
+        &self,
+        input: &RelationProposalCreateInput,
+    ) -> Result<RelationProposal, CoreError> {
+        let conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "relation_proposals") {
+            return Err(CoreError::Storage("relation_proposals table does not exist".into()));
+        }
+        let now = now_iso();
+        let source_file_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                params![input.source_path],
+                |row| row.get(0),
+            )
+            .ok();
+        let target_file_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                params![input.target_path],
+                |row| row.get(0),
+            )
+            .ok();
+        let normalized_type = normalize_relation_type(&input.relation_type);
+
+        conn.execute(
+            "INSERT INTO relation_proposals
+             (source_file_id, target_file_id, source_path, target_path, relation_type,
+              confidence, rationale, evidence_path, evidence_start_line, evidence_end_line,
+              evidence_text, status, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'pending', ?12)",
+            params![
+                source_file_id,
+                target_file_id,
+                input.source_path,
+                input.target_path,
+                normalized_type,
+                input.confidence,
+                input.rationale.trim(),
+                input.evidence_path,
+                input.evidence_start_line,
+                input.evidence_end_line,
+                input.evidence_text.as_deref().map(str::trim),
+                now,
+            ],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        let id = conn.last_insert_rowid();
+        self.get_relation_proposal(id)?
+            .ok_or_else(|| CoreError::Storage(format!("relation proposal {id} not found after create")))
+    }
+
+    /// Gets a single relation proposal by ID.
+    pub fn get_relation_proposal(&self, id: i64) -> Result<Option<RelationProposal>, CoreError> {
+        let Some(conn) = self.connect()? else {
+            return Ok(None);
+        };
+        if !Self::table_exists(&conn, "relation_proposals") {
+            return Ok(None);
+        }
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, source_file_id, target_file_id, source_path, target_path,
+                        relation_type, confidence, rationale, evidence_path,
+                        evidence_start_line, evidence_end_line, evidence_text,
+                        status, created_at, reviewed_at
+                   FROM relation_proposals WHERE id = ?1",
+            )
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        let mut rows = stmt
+            .query_map(params![id], map_proposal)
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        if let Some(row) = rows.next() {
+            Ok(Some(row.map_err(|e| CoreError::Storage(e.to_string()))?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Approves a pending relation proposal and publishes it to document_relations.
+    pub fn approve_relation_proposal(&self, id: i64) -> Result<RelationProposal, CoreError> {
+        let mut conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "relation_proposals") {
+            return Err(CoreError::Storage("relation_proposals table does not exist".into()));
+        }
+        let now = now_iso();
+        let tx = conn
+            .transaction()
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        let proposal_opt: Option<RelationProposal> = tx
+            .prepare(
+                "SELECT id, source_file_id, target_file_id, source_path, target_path,
+                        relation_type, confidence, rationale, evidence_path,
+                        evidence_start_line, evidence_end_line, evidence_text,
+                        status, created_at, reviewed_at
+                   FROM relation_proposals WHERE id = ?1",
+            )
+            .map_err(|e| CoreError::Storage(e.to_string()))?
+            .query_map(params![id], map_proposal)
+            .map_err(|e| CoreError::Storage(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .next();
+
+        let proposal = proposal_opt
+            .ok_or_else(|| CoreError::Storage(format!("relation proposal {id} not found")))?;
+
+        // Ensure files exist
+        let source_file_id: i64 = proposal.source_file_id.or_else(|| {
+            tx.query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                params![proposal.source_path],
+                |row| row.get(0),
+            ).ok()
+        }).ok_or_else(|| CoreError::Storage(format!("Source document '{}' not indexed", proposal.source_path)))?;
+
+        let target_file_id: i64 = proposal.target_file_id.or_else(|| {
+            tx.query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                params![proposal.target_path],
+                |row| row.get(0),
+            ).ok()
+        }).ok_or_else(|| CoreError::Storage(format!("Target document '{}' not indexed", proposal.target_path)))?;
+
+        // Update proposal status
+        tx.execute(
+            "UPDATE relation_proposals
+                SET status = 'approved', reviewed_at = ?1, source_file_id = ?2, target_file_id = ?3
+              WHERE id = ?4",
+            params![now, source_file_id, target_file_id, id],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        // Ensure relation type exists
+        tx.execute(
+            "INSERT INTO relation_types (name, display_name, inverse_name, symmetric, core)
+             VALUES (?1, ?2, NULL, 0, 0) ON CONFLICT(name) DO NOTHING",
+            params![proposal.relation_type, proposal.relation_type],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        // Insert / update document_relations
+        tx.execute(
+            "INSERT INTO document_relations (source_file_id, target_file_id, relation_type, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(source_file_id, target_file_id, relation_type)
+             DO UPDATE SET updated_at = excluded.updated_at",
+            params![source_file_id, target_file_id, proposal.relation_type, now, now],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        let relation_id: i64 = tx.query_row(
+            "SELECT id FROM document_relations
+              WHERE source_file_id = ?1 AND target_file_id = ?2 AND relation_type = ?3",
+            params![source_file_id, target_file_id, proposal.relation_type],
+            |row| row.get(0),
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        // Insert evidence
+        tx.execute(
+            "INSERT OR IGNORE INTO relation_evidence
+              (relation_id, source_kind, original_target, source_path, start_line, end_line,
+               evidence_text, rationale, confidence)
+             VALUES (?1, 'agent', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                relation_id,
+                proposal.target_path,
+                proposal.evidence_path,
+                proposal.evidence_start_line,
+                proposal.evidence_end_line,
+                proposal.evidence_text,
+                proposal.rationale,
+                proposal.confidence,
+            ],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        tx.commit().map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        self.get_relation_proposal(id)?
+            .ok_or_else(|| CoreError::Storage(format!("relation proposal {id} disappeared")))
+    }
+
+    /// Rejects a relation proposal.
+    pub fn reject_relation_proposal(&self, id: i64) -> Result<RelationProposal, CoreError> {
+        let conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "relation_proposals") {
+            return Err(CoreError::Storage("relation_proposals table does not exist".into()));
+        }
+        let now = now_iso();
+        conn.execute(
+            "UPDATE relation_proposals SET status = 'rejected', reviewed_at = ?1 WHERE id = ?2",
+            params![now, id],
+        )
+        .map_err(|e| CoreError::Storage(e.to_string()))?;
+
+        self.get_relation_proposal(id)?
+            .ok_or_else(|| CoreError::Storage(format!("relation proposal {id} disappeared")))
+    }
+
+    /// Deletes a relation proposal by ID.
+    pub fn delete_relation_proposal(&self, id: i64) -> Result<(), CoreError> {
+        let conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "relation_proposals") {
+            return Ok(());
+        }
+        conn.execute("DELETE FROM relation_proposals WHERE id = ?1", params![id])
+            .map_err(|e| CoreError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
     /// Lists all published (approved) relations across the workspace.
     /// Used by the desktop graph view to render every edge at once.
     pub fn all_relations(&self) -> Result<Vec<DocumentRelation>, CoreError> {
@@ -805,6 +1042,46 @@ impl SqliteStore {
         }
         self.get_draft(draft_id)?
             .ok_or_else(|| CoreError::Storage(format!("draft {draft_id} disappeared after reject")))
+    }
+
+    /// Deletes a draft record by `draft_id`. Also removes any associated
+    /// records in `write_operations` referencing this draft. Returns true if a
+    /// record was deleted.
+    pub fn delete_draft(&self, draft_id: &str) -> Result<bool, CoreError> {
+        let conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "drafts") {
+            return Ok(false);
+        }
+        if Self::table_exists(&conn, "write_operations") {
+            conn.execute(
+                "DELETE FROM write_operations WHERE draft_id = ?1",
+                rusqlite::params![draft_id],
+            )?;
+        }
+        let count = conn.execute(
+            "DELETE FROM drafts WHERE draft_id = ?1",
+            rusqlite::params![draft_id],
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Deletes drafts matching the given status (e.g. "applied", "rejected").
+    pub fn delete_drafts_by_status(&self, status: &str) -> Result<usize, CoreError> {
+        let conn = self.connect_write()?;
+        if !Self::table_exists(&conn, "drafts") {
+            return Ok(0);
+        }
+        if Self::table_exists(&conn, "write_operations") {
+            conn.execute(
+                "DELETE FROM write_operations WHERE draft_id IN (SELECT draft_id FROM drafts WHERE status = ?1)",
+                rusqlite::params![status],
+            )?;
+        }
+        let count = conn.execute(
+            "DELETE FROM drafts WHERE status = ?1",
+            rusqlite::params![status],
+        )?;
+        Ok(count)
     }
 
     /// Applies a pending draft to the filesystem and records the write.
@@ -1093,24 +1370,34 @@ impl SqliteStore {
 /// Builds a short preview snippet from chunk content, centered around the
 /// first occurrence of the query term. Caps at ~200 characters.
 fn make_preview(content: &str, query: &str) -> String {
-    const MAX_LEN: usize = 200;
+    const MAX_CHARS: usize = 120;
+    let chars: Vec<char> = content.chars().collect();
+    if chars.is_empty() {
+        return String::new();
+    }
+
     let lower_content = content.to_lowercase();
     let query_lower = query.to_lowercase();
     let query_term = query_lower.split_whitespace().next().unwrap_or(&query_lower);
 
-    let center = lower_content.find(query_term).unwrap_or(0);
-    let start = center.saturating_sub(MAX_LEN / 3);
-    let end = (start + MAX_LEN).min(content.len());
+    let char_idx = if let Some(byte_idx) = lower_content.find(query_term) {
+        content[..byte_idx].chars().count()
+    } else {
+        0
+    };
+
+    let start = char_idx.saturating_sub(MAX_CHARS / 3);
+    let end = (start + MAX_CHARS).min(chars.len());
 
     let mut preview = String::new();
     if start > 0 {
-        preview.push_str("…");
+        preview.push('…');
     }
-    preview.push_str(&content[start..end]);
-    if end < content.len() {
-        preview.push_str("…");
+    preview.extend(&chars[start..end]);
+    if end < chars.len() {
+        preview.push('…');
     }
-    preview.replace('\n', " ").chars().take(MAX_LEN + 10).collect()
+    preview.replace('\n', " ")
 }
 
 /// Maps a `drafts` row into a `Draft`.
@@ -1227,11 +1514,12 @@ fn replace_section(existing: &str, section_slug: &str, new_body: &str) -> Result
     }
 
     let parsed = crate::document_parser::parse_document(existing, "section.md");
+    let slug_prefix: String = section_slug.chars().take(20).collect();
     let target = parsed
         .sections
         .iter()
         .find(|s| s.slug == section_slug)
-        .or_else(|| parsed.sections.iter().find(|s| s.slug.starts_with(&section_slug[..section_slug.len().min(20)])));
+        .or_else(|| parsed.sections.iter().find(|s| s.slug.starts_with(&slug_prefix)));
 
     let Some(target) = target else {
         return Err(CoreError::Storage(format!(
@@ -1714,6 +2002,92 @@ mod tests {
     }
 
     #[test]
+    fn delete_draft_removes_record() {
+        let (_root, store) = draft_workspace();
+        let draft = store
+            .create_draft(&DraftCreateInput {
+                workspace_id: "ws-1".into(),
+                target_path: "wiki/to-delete.md".into(),
+                operation_type: "create".into(),
+                base_document_hash: String::new(),
+                generated_content: "content to delete".into(),
+                source_citations: vec![],
+                section_slug: String::new(),
+                created_by: "pi".into(),
+            })
+            .unwrap();
+
+        assert!(store.get_draft(&draft.draft_id).unwrap().is_some());
+        let deleted = store.delete_draft(&draft.draft_id).unwrap();
+        assert!(deleted);
+        assert!(store.get_draft(&draft.draft_id).unwrap().is_none());
+
+        // Deleting non-existent draft returns false
+        assert!(!store.delete_draft("non-existent-id").unwrap());
+    }
+
+    #[test]
+    fn delete_draft_removes_write_operations() {
+        let (root, store) = draft_workspace();
+        let draft = store
+            .create_draft(&DraftCreateInput {
+                workspace_id: "ws-1".into(),
+                target_path: "wiki/applied-delete.md".into(),
+                operation_type: "create".into(),
+                base_document_hash: String::new(),
+                generated_content: "applied content".into(),
+                source_citations: vec![],
+                section_slug: String::new(),
+                created_by: "desktop".into(),
+            })
+            .unwrap();
+
+        store.apply_draft(&draft.draft_id, &root, "desktop").unwrap();
+        let applied_draft = store.get_draft(&draft.draft_id).unwrap().unwrap();
+        assert_eq!(applied_draft.status, "applied");
+
+        let deleted = store.delete_draft(&draft.draft_id).unwrap();
+        assert!(deleted);
+        assert!(store.get_draft(&draft.draft_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_drafts_by_status_works() {
+        let (_root, store) = draft_workspace();
+        let draft1 = store
+            .create_draft(&DraftCreateInput {
+                workspace_id: "ws-1".into(),
+                target_path: "wiki/d1.md".into(),
+                operation_type: "create".into(),
+                base_document_hash: String::new(),
+                generated_content: "c1".into(),
+                source_citations: vec![],
+                section_slug: String::new(),
+                created_by: "pi".into(),
+            })
+            .unwrap();
+
+        let draft2 = store
+            .create_draft(&DraftCreateInput {
+                workspace_id: "ws-1".into(),
+                target_path: "wiki/d2.md".into(),
+                operation_type: "create".into(),
+                base_document_hash: String::new(),
+                generated_content: "c2".into(),
+                source_citations: vec![],
+                section_slug: String::new(),
+                created_by: "pi".into(),
+            })
+            .unwrap();
+
+        store.reject_draft(&draft1.draft_id).unwrap();
+        let count = store.delete_drafts_by_status("rejected").unwrap();
+        assert_eq!(count, 1);
+        assert!(store.get_draft(&draft1.draft_id).unwrap().is_none());
+        assert!(store.get_draft(&draft2.draft_id).unwrap().is_some());
+    }
+
+    #[test]
     fn apply_append_prepends_to_existing() {
         let (root, store) = draft_workspace();
         let existing_hash = file_sha256(&root.join("wiki/existing.md"));
@@ -1986,5 +2360,77 @@ mod tests {
         assert!(deleted);
         assert!(store.get_chat_session("session-1").unwrap().is_none());
     }
+
+    #[test]
+    fn relation_proposals_lifecycle() {
+        let (root, store) = draft_workspace();
+
+        // 1. Initially empty
+        let proposals = store.relation_proposals(None).unwrap();
+        assert!(proposals.is_empty());
+
+        // 2. Create proposal
+        let input = RelationProposalCreateInput {
+            source_path: "wiki/existing.md".into(),
+            target_path: "wiki/other.md".into(),
+            relation_type: "depends_on".into(),
+            confidence: 0.95,
+            rationale: "Architecture depends on storage".into(),
+            evidence_path: "wiki/existing.md".into(),
+            evidence_start_line: 1,
+            evidence_end_line: 5,
+            evidence_text: Some("Intro paragraph.".into()),
+        };
+        let created = store.create_relation_proposal(&input).unwrap();
+        assert_eq!(created.source_path, "wiki/existing.md");
+        assert_eq!(created.target_path, "wiki/other.md");
+        assert_eq!(created.relation_type, "depends_on");
+        assert_eq!(created.status, "pending");
+
+        // 3. List pending
+        let pending = store.relation_proposals(Some("pending")).unwrap();
+        assert_eq!(pending.len(), 1);
+
+        // 4. Reject
+        let rejected = store.reject_relation_proposal(created.id).unwrap();
+        assert_eq!(rejected.status, "rejected");
+
+        // 5. Create another and approve
+        // First create target file in DB by writing and indexing or inserting
+        std::fs::write(root.join("wiki/target.md"), "# Target Document\n\nTarget content.").unwrap();
+        crate::indexer::index_files(crate::indexer::IndexRunOptions {
+            project_root: root.clone(),
+            db_path: None,
+            config: crate::indexer::KbConfig::default(),
+            reset: false,
+            source_revision: None,
+            source_branch: None,
+            on_progress: None,
+        })
+        .unwrap();
+
+        let input2 = RelationProposalCreateInput {
+            source_path: "wiki/existing.md".into(),
+            target_path: "wiki/target.md".into(),
+            relation_type: "implements".into(),
+            confidence: 0.88,
+            rationale: "Implements target spec".into(),
+            evidence_path: "wiki/existing.md".into(),
+            evidence_start_line: 1,
+            evidence_end_line: 2,
+            evidence_text: Some("Intro paragraph.".into()),
+        };
+        let created2 = store.create_relation_proposal(&input2).unwrap();
+        let approved = store.approve_relation_proposal(created2.id).unwrap();
+        assert_eq!(approved.status, "approved");
+
+        // 6. Verify published relations
+        let all_rels = store.all_relations().unwrap();
+        assert_eq!(all_rels.len(), 1);
+        assert_eq!(all_rels[0].relation_type, "implements");
+        assert_eq!(all_rels[0].source_path, "wiki/existing.md");
+        assert_eq!(all_rels[0].target_path, "wiki/target.md");
+    }
 }
+
 

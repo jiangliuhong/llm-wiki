@@ -294,7 +294,7 @@ fn run_index(
     }
 
     // Stale cleanup: files in DB but not on disk.
-    if !reset && scan.unavailable_roots.is_empty() {
+    if !reset {
         let mut stmt = tx
             .prepare("SELECT id, path FROM files")
             .map_err(|e| crate::CoreError::Storage(e.to_string()))?;
@@ -304,7 +304,13 @@ fn run_index(
             .collect();
         drop(stmt);
         for (id, path) in &all_rows {
-            if !scanned_paths.contains(path) {
+            let file_abs = project_root.join(path);
+            let is_stale = if scan.unavailable_roots.is_empty() {
+                !scanned_paths.contains(path)
+            } else {
+                !file_abs.exists()
+            };
+            if is_stale {
                 delete_rows_for_file(&tx, *id)?;
                 tx.execute("DELETE FROM files WHERE id = ?1", params![id])
                     .map_err(|e| crate::CoreError::Storage(e.to_string()))?;
@@ -1294,6 +1300,7 @@ mod tests {
     fn stale_cleanup_removes_deleted_files() {
         let root = unique_temp_dir();
         fs::create_dir_all(root.join("wiki")).unwrap();
+        // Do not create docs/ (default include is ["wiki", "docs"])
         fs::write(root.join("wiki/a.md"), "# A").unwrap();
         fs::write(root.join("wiki/b.md"), "# B").unwrap();
 
@@ -1325,6 +1332,51 @@ mod tests {
         let store = crate::store::SqliteStore::from_root(&root);
         let list = store.list_files(Default::default()).unwrap();
         assert_eq!(list.total, 1);
+    }
+
+    #[test]
+    fn moving_directory_updates_index_cleanly() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("wiki/dir_a")).unwrap();
+        fs::write(root.join("wiki/dir_a/doc1.md"), "# Doc 1").unwrap();
+        fs::write(root.join("wiki/dir_a/doc2.md"), "# Doc 2").unwrap();
+
+        let opts = IndexRunOptions {
+            project_root: root.clone(),
+            db_path: None,
+            config: KbConfig::default(),
+            reset: false,
+            source_revision: None,
+            source_branch: None,
+            on_progress: None,
+        };
+        let first = index_files(opts).unwrap();
+        assert_eq!(first.added, 2);
+
+        // Rename dir_a to dir_b on disk
+        fs::rename(root.join("wiki/dir_a"), root.join("wiki/dir_b")).unwrap();
+
+        let opts = IndexRunOptions {
+            project_root: root.clone(),
+            db_path: None,
+            config: KbConfig::default(),
+            reset: false,
+            source_revision: None,
+            source_branch: None,
+            on_progress: None,
+        };
+        let second = index_files(opts).unwrap();
+        assert_eq!(second.added, 2);
+        assert_eq!(second.deleted, 2);
+
+        let store = crate::store::SqliteStore::from_root(&root);
+        let list = store.list_files(Default::default()).unwrap();
+        assert_eq!(list.total, 2);
+        let paths: Vec<&str> = list.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.contains(&"wiki/dir_b/doc1.md"));
+        assert!(paths.contains(&"wiki/dir_b/doc2.md"));
+        assert!(!paths.contains(&"wiki/dir_a/doc1.md"));
+        assert!(!paths.contains(&"wiki/dir_a/doc2.md"));
     }
 
     #[test]

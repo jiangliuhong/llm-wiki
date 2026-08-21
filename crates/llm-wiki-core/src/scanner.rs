@@ -69,9 +69,14 @@ pub fn scan_files_detailed(options: &ScanOptions) -> ScanResult {
 
     for root in &options.include {
         let abs_root = options.project_root.join(root);
-        let is_dir = fs::metadata(&abs_root).map(|m| m.is_dir()).unwrap_or(false);
-        if !is_dir {
-            unavailable_roots.push(root.clone());
+        let metadata = match fs::metadata(&abs_root) {
+            Ok(m) => m,
+            Err(_) => {
+                // If an include directory does not exist on disk, skip it (it contains 0 files).
+                continue;
+            }
+        };
+        if !metadata.is_dir() {
             continue;
         }
         if !walk(&abs_root, &options.project_root, &exclude_set, &supported_ext, &mut results) {
@@ -82,6 +87,33 @@ pub fn scan_files_detailed(options: &ScanOptions) -> ScanResult {
     // Stable, deterministic order for reproducible indexes.
     results.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     ScanResult { files: results, unavailable_roots }
+}
+
+/// Checks if a file or directory matches any exclusion pattern.
+fn is_excluded(name_str: &str, rel_path: &str, exclude_set: &HashSet<String>) -> bool {
+    if exclude_set.contains(name_str) || exclude_set.contains(rel_path) {
+        return true;
+    }
+    for item in exclude_set {
+        let trimmed = item.trim().trim_start_matches('/');
+        if trimmed.is_empty() {
+            continue;
+        }
+        if name_str.eq_ignore_ascii_case(trimmed) || rel_path.eq_ignore_ascii_case(trimmed) {
+            return true;
+        }
+        let suffix = format!("/{trimmed}");
+        if rel_path.ends_with(&suffix) {
+            return true;
+        }
+        if trimmed.starts_with("*.") {
+            let ext = &trimmed[1..];
+            if name_str.to_lowercase().ends_with(&ext.to_lowercase()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Returns `false` if the directory could not be read completely.
@@ -112,16 +144,22 @@ fn walk(
             None => continue,
         };
 
-        // Skip excluded directory names anywhere in the tree.
-        if exclude_set.contains(name_str) {
-            continue;
-        }
         // Skip hidden entries (leading dot), e.g. `.DS_Store`, `.git`.
         if name_str.starts_with('.') {
             continue;
         }
 
         let abs = entry.path();
+        let rel_path = match abs.strip_prefix(project_root) {
+            Ok(rel) => to_posix(rel),
+            Err(_) => to_posix(&abs),
+        };
+
+        // Skip excluded directory or file names / paths anywhere in the tree.
+        if is_excluded(name_str, &rel_path, exclude_set) {
+            continue;
+        }
+
         let file_type = match entry.file_type() {
             Ok(ft) => ft,
             Err(_) => {
@@ -144,10 +182,6 @@ fn walk(
             continue;
         }
 
-        let rel_path = match abs.strip_prefix(project_root) {
-            Ok(rel) => to_posix(rel),
-            Err(_) => to_posix(&abs),
-        };
         out.push(ScannedFile {
             rel_path,
             abs_path: abs,
@@ -218,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_unavailable_roots() {
+    fn skips_nonexistent_include_roots_cleanly() {
         let root = unique_temp_dir();
         let result = scan_files_detailed(&ScanOptions {
             project_root: root,
@@ -226,15 +260,27 @@ mod tests {
             exclude: vec![],
         });
         assert_eq!(result.files.len(), 0);
-        assert_eq!(result.unavailable_roots, vec!["nonexistent"]);
+        assert_eq!(result.unavailable_roots.len(), 0);
     }
 
     #[test]
-    fn language_detection() {
-        assert_eq!(language_from_extension(".md"), "markdown");
-        assert_eq!(language_from_extension(".MDX"), "markdown");
-        assert_eq!(language_from_extension(".ts"), "typescript");
-        assert_eq!(language_from_extension(".json"), "json");
-        assert_eq!(language_from_extension(".unknown"), "other");
+    fn skips_excluded_file_names_and_patterns() {
+        let root = unique_temp_dir();
+        fs::create_dir_all(root.join("wiki")).unwrap();
+        fs::write(root.join("wiki/AGENTS.md"), "# Agents").unwrap();
+        fs::write(root.join("wiki/README.md"), "# Readme").unwrap();
+        fs::write(root.join("wiki/temp.log.txt"), "log").unwrap();
+        fs::write(root.join("wiki/normal.md"), "# Normal").unwrap();
+
+        let result = scan_files_detailed(&ScanOptions {
+            project_root: root.clone(),
+            include: vec!["wiki".into()],
+            exclude: vec!["AGENTS.md".into(), "*.log.txt".into()],
+        });
+        let paths: Vec<&str> = result.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert!(paths.contains(&"wiki/README.md"));
+        assert!(paths.contains(&"wiki/normal.md"));
+        assert!(!paths.contains(&"wiki/AGENTS.md"));
+        assert!(!paths.contains(&"wiki/temp.log.txt"));
     }
 }

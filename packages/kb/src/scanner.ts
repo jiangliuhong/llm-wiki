@@ -112,6 +112,8 @@ export function scanFilesDetailed(options: ScanOptions): ScanResult {
       isDirectory = nodeFs.statSync(absRoot).isDirectory();
     } catch {
       // Missing and inaccessible roots are both unsafe for stale cleanup.
+      unavailableRoots.push(root);
+      continue;
     }
     if (!isDirectory) {
       unavailableRoots.push(root);
@@ -125,6 +127,32 @@ export function scanFilesDetailed(options: ScanOptions): ScanResult {
   // Stable, deterministic order for reproducible indexes.
   results.sort((a, b) => (a.relPath < b.relPath ? -1 : a.relPath > b.relPath ? 1 : 0));
   return { files: results, unavailableRoots };
+}
+
+function isExcluded(name: string, relPath: string, excludeSet: Set<string>): boolean {
+  if (excludeSet.has(name) || excludeSet.has(relPath)) {
+    return true;
+  }
+  const nameLower = name.toLowerCase();
+  const relLower = relPath.toLowerCase();
+  for (const item of excludeSet) {
+    const trimmed = item.trim().replace(/^\/+/, "");
+    if (!trimmed) continue;
+    const trimmedLower = trimmed.toLowerCase();
+    if (nameLower === trimmedLower || relLower === trimmedLower) {
+      return true;
+    }
+    if (relLower.endsWith(`/${trimmedLower}`)) {
+      return true;
+    }
+    if (trimmed.startsWith("*.")) {
+      const ext = trimmed.slice(1).toLowerCase();
+      if (nameLower.endsWith(ext)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function walk(
@@ -145,16 +173,19 @@ function walk(
   for (const entry of entries) {
     const name = entry.name;
 
-    // Skip excluded directory names anywhere in the tree.
-    if (excludeSet.has(name)) {
-      continue;
-    }
     // Skip hidden entries (leading dot), e.g. `.DS_Store`, `.git`.
     if (name.startsWith(".")) {
       continue;
     }
 
     const abs = nodePath.join(dirAbs, name);
+    const relPath = toPosix(nodePath.relative(projectRoot, abs));
+
+    // Skip excluded directory or file names / paths anywhere in the tree.
+    if (isExcluded(name, relPath, excludeSet)) {
+      continue;
+    }
+
     if (entry.isDirectory()) {
       if (!walk(abs, projectRoot, excludeSet, out)) {
         complete = false;
@@ -171,7 +202,7 @@ function walk(
     }
 
     out.push({
-      relPath: toPosix(nodePath.relative(projectRoot, abs)),
+      relPath,
       absPath: abs,
       language: languageFromExtension(ext),
     });

@@ -65,7 +65,7 @@ type LoadState<T> =
 
 export interface RelationsViewProps {
   workspace: { root: string; title: string } | null;
-  onAskAI: () => void;
+  onAskAI: (prompt?: string, autoSend?: boolean) => void;
   onOpenDocuments: () => void;
   onIndexed?: () => void;
 }
@@ -409,9 +409,9 @@ const ICON_PATHS: Record<string, React.ReactNode> = {
   refresh: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4" />,
 };
 
-function GIcon({ name, size = 16, strokeWidth = 1.7 }: { name: string; size?: number; strokeWidth?: number }): React.ReactElement {
+function GIcon({ name, size = 16, strokeWidth = 1.7, className }: { name: string; size?: number; strokeWidth?: number; className?: string }): React.ReactElement {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {ICON_PATHS[name] ?? null}
     </svg>
   );
@@ -648,6 +648,62 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
     });
   }, []);
 
+  const [approvingId, setApprovingId] = useState<number | null>(null);
+  const [rejectingId, setRejectingId] = useState<number | null>(null);
+  const [approvingAll, setApprovingAll] = useState(false);
+
+  const handleStartGlobalRelationAnalysis = useCallback((): void => {
+    const prompt = "请使用 document_list 和 document_read 工具全面阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具为发现的文档间依赖 (depends_on)、实现 (implements)、能力继承 (extends) 或重要语义引用关系创建带行号证据的关系提案。";
+    onAskAI(prompt, false);
+  }, [onAskAI]);
+
+  const handleApproveProposal = async (proposalId: number): Promise<void> => {
+    if (!workspace || !inTauriRuntime()) return;
+    setApprovingId(proposalId);
+    try {
+      await invoke("relation_proposal_approve", { root: workspace.root, id: proposalId });
+      showToast("已批准关系提案并更新图谱");
+      onIndexed?.();
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      showToast(`批准失败: ${String(e)}`);
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleRejectProposal = async (proposalId: number): Promise<void> => {
+    if (!workspace || !inTauriRuntime()) return;
+    setRejectingId(proposalId);
+    try {
+      await invoke("relation_proposal_reject", { root: workspace.root, id: proposalId });
+      showToast("已忽略该关系提案");
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      showToast(`操作失败: ${String(e)}`);
+    } finally {
+      setRejectingId(null);
+    }
+  };
+
+  const handleApproveAllProposals = async (): Promise<void> => {
+    const pendings = proposals.filter((p) => p.status === "pending");
+    if (!workspace || !inTauriRuntime() || pendings.length === 0) return;
+    setApprovingAll(true);
+    try {
+      for (const p of pendings) {
+        await invoke("relation_proposal_approve", { root: workspace.root, id: p.id });
+      }
+      showToast(`已成功批准 ${pendings.length} 条关系提案并更新图谱`);
+      onIndexed?.();
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      showToast(`批量批准失败: ${String(e)}`);
+    } finally {
+      setApprovingAll(false);
+    }
+  };
+
   const handleEmptyReindex = async (): Promise<void> => {
     if (!workspace || !inTauriRuntime() || indexing) return;
     setIndexing(true);
@@ -656,6 +712,7 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
       await invoke("index_run", { root: workspace.root });
       onIndexed?.();
       setReloadKey((k) => k + 1);
+      showToast("工作区索引与确定性关系扫描完成");
     } catch (e: unknown) {
       setIndexError(String(e));
     } finally {
@@ -695,7 +752,7 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
       <div className="doc-empty-container">
         <div className="doc-empty-card">
           <div className="doc-empty-icon">
-            <GIcon name="refresh" size={28} />
+            <GIcon name="refresh" size={28} className="spin" />
           </div>
           <h2>加载关系图谱…</h2>
           <p className="doc-empty-desc">正在读取图谱节点与关联拓扑结构，请稍候</p>
@@ -722,7 +779,76 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
     );
   }
 
-  if (!model || (model.nodes.length === 0 && proposals.length === 0)) {
+  // When there are no published edges but we have pending proposals from AI
+  const pendingProposalsList = proposals.filter((p) => p.status === "pending");
+  if (!model || model.nodes.length === 0) {
+    if (pendingProposalsList.length > 0) {
+      return (
+        <div className="doc-empty-container">
+          <div className="doc-empty-card" style={{ maxWidth: 660 }}>
+            <div className="doc-empty-icon" style={{ background: "var(--accent-subtle)", color: "var(--accent)" }}>
+              <GIcon name="spark" size={28} />
+            </div>
+            <h2>已发现 {pendingProposalsList.length} 条待审核关系提案</h2>
+            <p className="doc-empty-desc">
+              AI 智能体已为当前知识库挖掘出潜在关联。批准提案后将自动绘制关系拓扑网络。
+            </p>
+
+            <div className="rg-proposal-list" style={{ margin: "16px 0", maxHeight: 260, overflowY: "auto", textAlign: "left" }}>
+              {pendingProposalsList.map((p) => (
+                <div key={p.id} className="rg-proposal">
+                  <div className="rg-proposal-header">
+                    <span className="rg-proposal-title">{docName(p.sourcePath)} → {docName(p.targetPath)}</span>
+                    <span className="rg-proposal-type">{prettyType(p.relationType)}</span>
+                  </div>
+                  <div className="rg-proposal-meta">
+                    <span>置信度 {(p.confidence * 100).toFixed(0)}%</span>
+                  </div>
+                  {p.rationale && <div className="rg-proposal-rationale">{p.rationale}</div>}
+                  <div className="rg-proposal-actions">
+                    <button
+                      className="rg-prop-btn reject"
+                      disabled={rejectingId === p.id}
+                      onClick={() => void handleRejectProposal(p.id)}
+                    >
+                      忽略
+                    </button>
+                    <button
+                      className="rg-prop-btn approve"
+                      disabled={approvingId === p.id}
+                      onClick={() => void handleApproveProposal(p.id)}
+                    >
+                      {approvingId === p.id ? "批准中…" : "批准入图"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="doc-empty-actions">
+              <button
+                type="button"
+                className="primary-button"
+                disabled={approvingAll}
+                onClick={() => void handleApproveAllProposals()}
+              >
+                <GIcon name="check" size={14} />
+                <span>{approvingAll ? "正在批准全部…" : `一键批准全部提案 (${pendingProposalsList.length})`}</span>
+              </button>
+              <button
+                type="button"
+                className="tool-button"
+                onClick={handleStartGlobalRelationAnalysis}
+              >
+                <GIcon name="spark" size={14} />
+                <span>再次让 AI 分析</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="doc-empty-container">
         <div className="doc-empty-card" style={{ maxWidth: 660 }}>
@@ -755,19 +881,23 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
             <button
               type="button"
               className="primary-button"
+              onClick={handleStartGlobalRelationAnalysis}
+            >
+              <GIcon name="spark" size={14} />
+              <span>AI 深度分析并生成关系提案</span>
+            </button>
+            <button
+              type="button"
+              className="tool-button"
               disabled={indexing || !workspace}
               onClick={() => void handleEmptyReindex()}
             >
               <GIcon name="refresh" size={14} />
-              <span className={indexing ? "spin" : ""}>{indexing ? "正在重新索引中…" : "立即重新索引并构建图谱"}</span>
+              <span className={indexing ? "spin" : ""}>{indexing ? "正在重新索引中…" : "重新扫描内链/双链"}</span>
             </button>
             <button type="button" className="tool-button" onClick={onOpenDocuments}>
               <GIcon name="file" size={14} />
               <span>查看文档库</span>
-            </button>
-            <button type="button" className="tool-button" onClick={onAskAI}>
-              <GIcon name="spark" size={14} />
-              <span>AI 分析关系</span>
             </button>
           </div>
 
@@ -925,12 +1055,43 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
 
         {pendingProposals.length > 0 && (
           <section className="rg-section">
-            <div className="rg-kicker"><span>待审核候选 · {pendingProposals.length}</span></div>
+            <div className="rg-kicker-row">
+              <div className="rg-kicker"><span>待审核候选 · {pendingProposals.length}</span></div>
+              <button
+                className="rg-prop-all-btn"
+                disabled={approvingAll}
+                onClick={() => void handleApproveAllProposals()}
+              >
+                {approvingAll ? "批准中…" : "全部批准"}
+              </button>
+            </div>
             <div className="rg-proposal-list">
               {pendingProposals.slice(0, 10).map((p) => (
                 <div key={p.id} className="rg-proposal" title={p.rationale}>
-                  <strong>{docName(p.sourcePath)} → {docName(p.targetPath)}</strong>
-                  <span>{prettyType(p.relationType)} · 置信度 {(p.confidence * 100).toFixed(0)}%</span>
+                  <div className="rg-proposal-header">
+                    <span className="rg-proposal-title">{docName(p.sourcePath)} → {docName(p.targetPath)}</span>
+                    <span className="rg-proposal-type">{prettyType(p.relationType)}</span>
+                  </div>
+                  <div className="rg-proposal-meta">
+                    <span>置信度 {(p.confidence * 100).toFixed(0)}%</span>
+                  </div>
+                  {p.rationale && <div className="rg-proposal-rationale">{p.rationale}</div>}
+                  <div className="rg-proposal-actions">
+                    <button
+                      className="rg-prop-btn reject"
+                      disabled={rejectingId === p.id}
+                      onClick={() => void handleRejectProposal(p.id)}
+                    >
+                      忽略
+                    </button>
+                    <button
+                      className="rg-prop-btn approve"
+                      disabled={approvingId === p.id}
+                      onClick={() => void handleApproveProposal(p.id)}
+                    >
+                      {approvingId === p.id ? "…" : "批准"}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -956,6 +1117,20 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
         <span className="rg-meta-chip">{visibleNodeCount} 节点</span>
         <span className="rg-meta-chip">{visibleEdgeCount} 关系</span>
         <div className="rg-toolbar-spacer" />
+        <button
+          className="rg-tool"
+          onClick={() => {
+            if (selected) {
+              onAskAI(`请针对文档 "${selected.path}"（${selected.title}），深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`, false);
+            } else {
+              handleStartGlobalRelationAnalysis();
+            }
+          }}
+          title="让 AI 深度分析文档关系"
+        >
+          <GIcon name="spark" size={14} />
+          <span>{selected ? "AI 分析当前文档" : "AI 挖掘关系"}</span>
+        </button>
         <button className="rg-tool" onClick={fit}><GIcon name="fit" size={14} /><span>适应画布</span></button>
         <button className="rg-tool" disabled={!model.rootId} onClick={() => model.rootId && selectNode(model.rootId, true)}><GIcon name="target" size={14} /><span>聚焦核心</span></button>
         <button className={showLabels ? "rg-tool active" : "rg-tool"} onClick={() => setShowLabels((v) => !v)}><GIcon name="label" size={14} /><span>关系名称</span></button>
@@ -1144,7 +1319,19 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
           </>}
       </div>
       <div className="rg-inspector-footer">
-        <button className="rg-action" onClick={onAskAI}><GIcon name="spark" size={14} /><span>询问 AI</span></button>
+        <button
+          className="rg-action"
+          onClick={() => {
+            if (selected) {
+              onAskAI(`请针对文档 "${selected.path}"（${selected.title}），深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`, false);
+            } else {
+              handleStartGlobalRelationAnalysis();
+            }
+          }}
+        >
+          <GIcon name="spark" size={14} />
+          <span>AI 分析关联</span>
+        </button>
         <button className="rg-action primary" onClick={onOpenDocuments}><GIcon name="external" size={14} /><span>打开文档</span></button>
       </div>
     </aside>

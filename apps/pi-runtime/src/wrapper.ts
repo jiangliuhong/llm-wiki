@@ -202,32 +202,91 @@ export class AgentSessionWrapper {
     const entries = this.session.sessionManager.getEntries();
     const messages: MessageRecord[] = [];
 
+    // Collect all tool results from tool messages/entries
+    const toolResults = new Map<string, { result: unknown; isError?: boolean }>();
+
+    for (const entry of entries) {
+      if (!entry) continue;
+      const msg = (entry as { message?: unknown }).message as {
+        role?: string;
+        toolCallId?: string;
+        id?: string;
+        content?: unknown;
+        isError?: boolean;
+      } | undefined;
+
+      if (msg && msg.role === "tool") {
+        const id = msg.toolCallId || msg.id;
+        if (id) {
+          let content = msg.content;
+          if (Array.isArray(content)) {
+            for (const p of content as { type?: string; text?: string; result?: unknown }[]) {
+              if (p?.text) content = p.text;
+              else if (p?.result !== undefined) content = p.result;
+            }
+          }
+          toolResults.set(id, { result: content, isError: Boolean(msg.isError) });
+        }
+      }
+    }
+
     for (let i = 0; i < entries.length; i += 1) {
       const entry = entries[i];
       if (!entry || !("message" in entry) || !entry.message) continue;
 
       const rawMsg = entry.message as {
-        role?: "user" | "assistant" | "system";
+        role?: "user" | "assistant" | "system" | "tool";
         content?: unknown;
         stopReason?: string;
         errorMessage?: string;
         timestamp?: number;
       };
 
+      // Skip standalone tool result messages from the visible chat messages array
+      if (rawMsg.role === "tool") {
+        continue;
+      }
+
       const role = rawMsg.role ?? "user";
       const text = extractAssistantText(rawMsg.content);
       const thinking = role === "assistant" ? extractAssistantThinking(rawMsg.content) : undefined;
       const createdAt = rawMsg.timestamp ?? (Date.now() - (entries.length - i) * 1000);
 
-      // Collect tool calls if content contains tool_call parts or subsequent entries
+      // Collect tool calls if content contains tool_call parts
       const toolCalls: ToolCallRecord[] = [];
       if (Array.isArray(rawMsg.content)) {
-        for (const part of rawMsg.content as { type?: string; id?: string; name?: string; input?: unknown }[]) {
-          if (part?.type === "tool_use" || part?.type === "tool_call") {
+        for (const part of rawMsg.content as {
+          type?: string;
+          id?: string;
+          toolCallId?: string;
+          name?: string;
+          toolName?: string;
+          input?: unknown;
+          args?: unknown;
+          arguments?: unknown;
+          result?: unknown;
+          isError?: boolean;
+        }[]) {
+          const isToolCall =
+            part?.type === "tool_use" ||
+            part?.type === "tool_call" ||
+            part?.type === "toolCall" ||
+            part?.type === "tool-call";
+
+          if (isToolCall) {
+            const toolId = part.id ?? part.toolCallId ?? `tool-${Math.random().toString(36).slice(2, 8)}`;
+            const toolName = part.name ?? part.toolName ?? "unknown";
+            const args = part.input ?? part.args ?? part.arguments ?? {};
+            const matchedResult = toolResults.get(toolId);
+            const result = part.result !== undefined ? part.result : matchedResult?.result;
+            const isError = part.isError !== undefined ? part.isError : matchedResult?.isError;
+
             toolCalls.push({
-              toolCallId: part.id ?? `tool-${Math.random().toString(36).slice(2, 8)}`,
-              toolName: part.name ?? "unknown",
-              args: part.input ?? {},
+              toolCallId: toolId,
+              toolName,
+              args,
+              ...(result !== undefined ? { result } : {}),
+              ...(isError !== undefined ? { isError } : {}),
             });
           }
         }

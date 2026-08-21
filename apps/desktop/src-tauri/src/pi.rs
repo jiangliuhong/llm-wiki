@@ -547,6 +547,203 @@ fn execute_core_tool(workspace_root: &str, tool: &str, input: &Value) -> Result<
             }))
         }
 
+        "document_draft_create" => {
+            let store = SqliteStore::from_root(workspace_root);
+            let target_path = input
+                .get("targetPath")
+                .or_else(|| input.get("target_path"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "missing 'targetPath' parameter".to_string())?
+                .to_string();
+
+            let operation_type = input
+                .get("operationType")
+                .or_else(|| input.get("operation_type"))
+                .and_then(Value::as_str)
+                .unwrap_or("create")
+                .to_string();
+
+            let generated_content = input
+                .get("generatedContent")
+                .or_else(|| input.get("generated_content"))
+                .or_else(|| input.get("content"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "missing 'generatedContent' parameter".to_string())?
+                .to_string();
+
+            let base_document_hash = input
+                .get("baseDocumentHash")
+                .or_else(|| input.get("base_document_hash"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+
+            let section_slug = input
+                .get("sectionSlug")
+                .or_else(|| input.get("section_slug"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+
+            let citations = input
+                .get("sourceCitations")
+                .or_else(|| input.get("source_citations"))
+                .or_else(|| input.get("citations"))
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            let created_by = input
+                .get("createdBy")
+                .or_else(|| input.get("created_by"))
+                .and_then(Value::as_str)
+                .unwrap_or("ai-chat")
+                .to_string();
+
+            let draft = store
+                .create_draft(&llm_wiki_core::store::DraftCreateInput {
+                    workspace_id: workspace_root.to_string(),
+                    target_path,
+                    operation_type,
+                    base_document_hash,
+                    generated_content,
+                    source_citations: citations,
+                    section_slug,
+                    created_by,
+                })
+                .map_err(|e| e.to_string())?;
+
+            serde_json::to_value(&draft).map_err(|e| e.to_string())
+        }
+
+        "document_draft_get" => {
+            let store = SqliteStore::from_root(workspace_root);
+            let draft_id = input
+                .get("draftId")
+                .or_else(|| input.get("draft_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "missing 'draftId' parameter".to_string())?;
+            let draft = store.get_draft(draft_id).map_err(|e| e.to_string())?;
+            serde_json::to_value(&draft).map_err(|e| e.to_string())
+        }
+
+        "document_draft_list" => {
+            let store = SqliteStore::from_root(workspace_root);
+            let status = input
+                .get("status")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty());
+            let drafts = store.list_drafts(status).map_err(|e| e.to_string())?;
+            serde_json::to_value(&drafts).map_err(|e| e.to_string())
+        }
+
+        "document_draft_delete" => {
+            let store = SqliteStore::from_root(workspace_root);
+            let draft_id = input
+                .get("draftId")
+                .or_else(|| input.get("draft_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "missing 'draftId' parameter".to_string())?;
+            let deleted = store.delete_draft(draft_id).map_err(|e| e.to_string())?;
+            serde_json::to_value(&deleted).map_err(|e| e.to_string())
+        }
+
+        "relation_proposal_create" => {
+            let store = SqliteStore::from_root(workspace_root);
+            let source_path = input
+                .get("sourcePath")
+                .or_else(|| input.get("source_path"))
+                .or_else(|| input.get("source"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "missing 'sourcePath' parameter".to_string())?
+                .to_string();
+
+            let target_path = input
+                .get("targetPath")
+                .or_else(|| input.get("target_path"))
+                .or_else(|| input.get("target"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "missing 'targetPath' parameter".to_string())?
+                .to_string();
+
+            let relation_type = input
+                .get("relationType")
+                .or_else(|| input.get("relation_type"))
+                .or_else(|| input.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or("related_to")
+                .to_string();
+
+            let confidence = input
+                .get("confidence")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.85);
+
+            let rationale = input
+                .get("rationale")
+                .or_else(|| input.get("reason"))
+                .and_then(Value::as_str)
+                .unwrap_or("AI semantic inference")
+                .to_string();
+
+            let evidence_obj = input.get("evidence");
+            let evidence_path = evidence_obj
+                .and_then(|e| e.get("path"))
+                .and_then(Value::as_str)
+                .or_else(|| input.get("evidencePath").and_then(Value::as_str))
+                .unwrap_or(&source_path)
+                .to_string();
+
+            let evidence_start_line = evidence_obj
+                .and_then(|e| e.get("startLine").or_else(|| e.get("start_line")))
+                .and_then(Value::as_i64)
+                .or_else(|| input.get("evidenceStartLine").and_then(Value::as_i64))
+                .unwrap_or(1);
+
+            let evidence_end_line = evidence_obj
+                .and_then(|e| e.get("endLine").or_else(|| e.get("end_line")))
+                .and_then(Value::as_i64)
+                .or_else(|| input.get("evidenceEndLine").and_then(Value::as_i64))
+                .unwrap_or(evidence_start_line);
+
+            let evidence_text = evidence_obj
+                .and_then(|e| e.get("text"))
+                .and_then(Value::as_str)
+                .or_else(|| input.get("evidenceText").and_then(Value::as_str))
+                .map(str::to_string);
+
+            let proposal = store
+                .create_relation_proposal(&llm_wiki_core::store::RelationProposalCreateInput {
+                    source_path,
+                    target_path,
+                    relation_type,
+                    confidence,
+                    rationale,
+                    evidence_path,
+                    evidence_start_line,
+                    evidence_end_line,
+                    evidence_text,
+                })
+                .map_err(|e| e.to_string())?;
+
+            serde_json::to_value(&proposal).map_err(|e| e.to_string())
+        }
+
+        "relation_proposal_list" => {
+            let store = SqliteStore::from_root(workspace_root);
+            let status = input
+                .get("status")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty());
+            let proposals = store.relation_proposals(status).map_err(|e| e.to_string())?;
+            serde_json::to_value(&proposals).map_err(|e| e.to_string())
+        }
+
         other => Err(format!("Tool '{other}' is not allowed or supported")),
     }
 }

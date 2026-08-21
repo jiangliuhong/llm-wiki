@@ -63,7 +63,7 @@ pub fn is_tool_allowed(scope: &McpScope, tool: &str) -> bool {
     if READ_ONLY_TOOLS.contains(&tool) {
         return true;
     }
-    if tool == "document_draft_create" || tool == "document_draft_get" {
+    if tool == "document_draft_create" || tool == "document_draft_get" || tool == "document_draft_delete" {
         return scope.allow_drafts || scope.allow_apply;
     }
     if tool == "document_draft_apply" {
@@ -320,6 +320,15 @@ fn dispatch_tool(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "missing 'draftId' parameter".to_string())?;
             let result = store.apply_draft(draft_id, root, "mcp").map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(&result).map_err(|e| e.to_string())?)
+        }
+
+        "document_draft_delete" => {
+            let draft_id = input
+                .get("draftId")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "missing 'draftId' parameter".to_string())?;
+            let result = store.delete_draft(draft_id).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(&result).map_err(|e| e.to_string())?)
         }
 

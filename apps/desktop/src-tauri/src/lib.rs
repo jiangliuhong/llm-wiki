@@ -104,6 +104,38 @@ fn workspace_create(title: String, root: String) -> Result<WorkspaceInfo, String
 }
 
 #[tauri::command]
+fn workspace_rename(root: String, title: String) -> Result<WorkspaceInfo, String> {
+    let requested = root.trim();
+    let new_title = title.trim();
+    if requested.is_empty() || new_title.is_empty() {
+        return Err("工作区路径和名称不能为空".into());
+    }
+    let root_path = PathBuf::from(requested);
+    let resolved_root = root_path
+        .canonicalize()
+        .map_err(|error| format!("failed to resolve workspace directory: {error}"))?;
+    let manifest_path = resolved_root.join(".llm-wiki").join("workspace.json");
+    if !manifest_path.is_file() {
+        return Err("工作区配置文件不存在".into());
+    }
+    let bytes = fs::read(&manifest_path)
+        .map_err(|error| format!("failed to read workspace manifest: {error}"))?;
+    let mut manifest: WorkspaceManifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("failed to parse workspace manifest: {error}"))?;
+    manifest.title = new_title.to_string();
+    let updated_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| error.to_string())?;
+    fs::write(&manifest_path, updated_bytes)
+        .map_err(|error| format!("failed to write workspace manifest: {error}"))?;
+    Ok(WorkspaceInfo {
+        id: manifest.id,
+        title: manifest.title,
+        root: resolved_root,
+        resolved_by: "renamed".into(),
+    })
+}
+
+#[tauri::command]
 fn workspace_delete(root: String, purge: bool) -> Result<PathBuf, String> {
     let requested = root.trim();
     if requested.is_empty() {
@@ -170,7 +202,11 @@ fn documents_list(
 ) -> Result<llm_wiki_core::store::KbFileListPage, String> {
     let store = SqliteStore::from_root(&root);
     store
-        .list_files(ListFilesOptions { page, page_size, q })
+        .list_files(ListFilesOptions {
+            page,
+            page_size: page_size.or(Some(1000)),
+            q,
+        })
         .map_err(|e| e.to_string())
 }
 
@@ -194,6 +230,42 @@ fn relations_list(
         .map_err(|e| e.to_string())?;
     let published = store.all_relations().map_err(|e| e.to_string())?;
     Ok(RelationsPayload { proposals, published })
+}
+
+#[tauri::command]
+fn relation_proposal_create(
+    root: String,
+    input: llm_wiki_core::store::RelationProposalCreateInput,
+) -> Result<llm_wiki_core::store::RelationProposal, String> {
+    let store = SqliteStore::from_root(&root);
+    store.create_relation_proposal(&input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn relation_proposal_approve(
+    root: String,
+    id: i64,
+) -> Result<llm_wiki_core::store::RelationProposal, String> {
+    let store = SqliteStore::from_root(&root);
+    store.approve_relation_proposal(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn relation_proposal_reject(
+    root: String,
+    id: i64,
+) -> Result<llm_wiki_core::store::RelationProposal, String> {
+    let store = SqliteStore::from_root(&root);
+    store.reject_relation_proposal(id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn relation_proposal_delete(
+    root: String,
+    id: i64,
+) -> Result<(), String> {
+    let store = SqliteStore::from_root(&root);
+    store.delete_relation_proposal(id).map_err(|e| e.to_string())
 }
 
 /// Bundles the two relation surfaces the graph view needs in one round-trip:
@@ -233,6 +305,8 @@ struct KbConfigFile {
     #[serde(default)]
     include: Option<Vec<String>>,
     #[serde(default)]
+    exclude: Option<Vec<String>>,
+    #[serde(default)]
     model: Option<pi::ModelConfig>,
 }
 
@@ -251,18 +325,24 @@ fn read_kb_config(root: &str) -> KbConfigFile {
 #[serde(rename_all = "camelCase")]
 struct KbConfigInfo {
     include: Vec<String>,
+    exclude: Vec<String>,
     defaults: Vec<String>,
+    default_exclude: Vec<String>,
 }
 
-/// Returns the workspace's configured index directories, falling back to the
-/// built-in defaults (`wiki/`) when no config file exists.
+/// Returns the workspace's configured index and exclude rules, falling back to
+/// built-in defaults when no config file exists.
 #[tauri::command]
 fn kb_config_get(root: String) -> Result<KbConfigInfo, String> {
-    let defaults = KbConfig::default().include;
-    let stored = read_kb_config(&root).include.filter(|v| !v.is_empty());
+    let default_cfg = KbConfig::default();
+    let stored = read_kb_config(&root);
+    let include = stored.include.filter(|v| !v.is_empty()).unwrap_or_else(|| default_cfg.include.clone());
+    let exclude = stored.exclude.filter(|v| !v.is_empty()).unwrap_or_else(|| default_cfg.exclude.clone());
     Ok(KbConfigInfo {
-        include: stored.unwrap_or_else(|| defaults.clone()),
-        defaults,
+        include,
+        exclude,
+        defaults: default_cfg.include,
+        default_exclude: default_cfg.exclude,
     })
 }
 
@@ -298,7 +378,38 @@ fn kb_config_set_include(root: String, include: Vec<String>) -> Result<KbConfigI
     value["include"] = serde_json::to_value(&cleaned).map_err(|e| e.to_string())?;
     let raw = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
     fs::write(&path, raw).map_err(|e| format!("failed to write config: {e}"))?;
-    Ok(KbConfigInfo { include: cleaned, defaults: KbConfig::default().include })
+    kb_config_get(root)
+}
+
+/// Persists the workspace's ignore / exclude list. Entries can be filenames,
+/// directory names, relative paths or wildcard patterns (e.g. AGENTS.md, *.log).
+#[tauri::command]
+fn kb_config_set_exclude(root: String, exclude: Vec<String>) -> Result<KbConfigInfo, String> {
+    let mut cleaned: Vec<String> = Vec::new();
+    for entry in exclude {
+        let trimmed = entry.trim().trim_start_matches('/').to_string();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.contains("..") || trimmed.contains('\\') {
+            return Err(format!("invalid ignore rule: '{trimmed}'"));
+        }
+        if !cleaned.iter().any(|v| v == &trimmed) {
+            cleaned.push(trimmed);
+        }
+    }
+    let path = kb_config_path(&root);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("failed to create .llm-wiki directory: {e}"))?;
+    }
+    let mut value: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    value["exclude"] = serde_json::to_value(&cleaned).map_err(|e| e.to_string())?;
+    let raw = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    fs::write(&path, raw).map_err(|e| format!("failed to write config: {e}"))?;
+    kb_config_get(root)
 }
 
 /// Triggers an incremental index pass on the workspace using the Rust indexer.
@@ -308,8 +419,12 @@ fn kb_config_set_include(root: String, include: Vec<String>) -> Result<KbConfigI
 #[tauri::command]
 fn index_run(root: String, reset: Option<bool>) -> Result<llm_wiki_core::indexer::IndexStats, String> {
     let mut config = KbConfig::default();
-    if let Some(include) = read_kb_config(&root).include.filter(|v| !v.is_empty()) {
+    let stored = read_kb_config(&root);
+    if let Some(include) = stored.include.filter(|v| !v.is_empty()) {
         config.include = include;
+    }
+    if let Some(exclude) = stored.exclude.filter(|v| !v.is_empty()) {
+        config.exclude = exclude;
     }
     let options = IndexRunOptions {
         project_root: PathBuf::from(&root),
@@ -379,6 +494,18 @@ fn draft_apply(root: String, draft_id: String) -> Result<llm_wiki_core::store::D
 fn draft_reject(root: String, draft_id: String) -> Result<llm_wiki_core::store::Draft, String> {
     let store = SqliteStore::from_root(&root);
     store.reject_draft(&draft_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn draft_delete(root: String, draft_id: String) -> Result<bool, String> {
+    let store = SqliteStore::from_root(&root);
+    store.delete_draft(&draft_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn draft_delete_by_status(root: String, status: String) -> Result<usize, String> {
+    let store = SqliteStore::from_root(&root);
+    store.delete_drafts_by_status(&status).map_err(|e| e.to_string())
 }
 
 // --- File import (MVP: copy to attachments/ + optional draft creation) -----
@@ -803,6 +930,148 @@ fn now_iso() -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", year, month, day, hour, minute, second, millis)
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiEnvironmentInfo {
+    node_version: Option<String>,
+    pi_version: Option<String>,
+    latest_version: Option<String>,
+    has_update: bool,
+    status: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PiUpgradeResult {
+    success: bool,
+    message: String,
+    output: String,
+}
+
+fn get_augmented_path() -> String {
+    let mut paths = vec![
+        "/opt/homebrew/bin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+        "/usr/sbin".to_string(),
+        "/sbin".to_string(),
+    ];
+    if let Ok(home) = env::var("HOME") {
+        paths.push(format!("{home}/.npm-global/bin"));
+        paths.push(format!("{home}/.nvm/current/bin"));
+        paths.push(format!("{home}/.cargo/bin"));
+    }
+    if let Ok(existing) = env::var("PATH") {
+        paths.push(existing);
+    }
+    paths.join(":")
+}
+
+fn run_command_in_path(cmd: &str, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new(cmd)
+        .args(args)
+        .env("PATH", get_augmented_path())
+        .output()
+        .map_err(|e| format!("无法执行 {cmd}: {e}"))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !err.is_empty() {
+            Err(err)
+        } else if !out.is_empty() {
+            Err(out)
+        } else {
+            Err(format!("{cmd} 执行返回错误码 {}", output.status))
+        }
+    }
+}
+
+/// Checks the local Node.js environment, installed Pi CLI version, and checks
+/// npm registry for updates.
+#[tauri::command]
+async fn pi_environment_check() -> Result<PiEnvironmentInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let node_version = run_command_in_path("node", &["--version"]).ok();
+        let pi_version = run_command_in_path("pi", &["--version"]).ok();
+
+        let latest_version = run_command_in_path("npm", &["view", "@earendil-works/pi-coding-agent", "version"]).ok()
+            .or_else(|| run_command_in_path("npm", &["view", "@earendil-works/pi-ai", "version"]).ok());
+
+        let mut has_update = false;
+        if let (Some(cur), Some(latest)) = (&pi_version, &latest_version) {
+            let clean_cur = cur.trim_start_matches('v').trim();
+            let clean_lat = latest.trim_start_matches('v').trim();
+            if !clean_cur.is_empty() && !clean_lat.is_empty() && clean_cur != clean_lat {
+                has_update = true;
+            }
+        }
+
+        let status = if pi_version.is_some() && node_version.is_some() {
+            "ready".to_string()
+        } else if node_version.is_some() {
+            "pi_missing".to_string()
+        } else {
+            "node_missing".to_string()
+        };
+
+        let message = match (&pi_version, &node_version, &latest_version) {
+            (Some(pv), Some(nv), Some(lv)) if has_update => {
+                format!("Pi CLI {pv} (Node {nv}) · 发现新版本 {lv}")
+            }
+            (Some(pv), Some(nv), _) => {
+                format!("Pi CLI {pv} (Node {nv}) · 已是最新版本")
+            }
+            (None, Some(nv), _) => {
+                format!("Node {nv} 已就绪，未检测到全局 Pi CLI（可点击版本升级进行安装）")
+            }
+            _ => "未检测到 Node.js 环境，请先安装 Node.js (>= 22)".to_string(),
+        };
+
+        Ok(PiEnvironmentInfo {
+            node_version,
+            pi_version,
+            latest_version,
+            has_update,
+            status,
+            message,
+        })
+    })
+    .await
+    .map_err(|e| format!("Pi 检查异常：{e}"))?
+}
+
+/// Upgrades or installs global Pi CLI package.
+#[tauri::command]
+async fn pi_upgrade() -> Result<PiUpgradeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = std::process::Command::new("npm")
+            .args(&["install", "-g", "@earendil-works/pi-coding-agent@latest", "@earendil-works/pi-ai@latest"])
+            .env("PATH", get_augmented_path())
+            .output()
+            .map_err(|e| format!("执行 npm install 升级失败: {e}"))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let full_out = if stderr.is_empty() { stdout.clone() } else { format!("{stdout}\n{stderr}").trim().to_string() };
+
+        if output.status.success() {
+            Ok(PiUpgradeResult {
+                success: true,
+                message: "Pi 升级成功！".into(),
+                output: full_out,
+            })
+        } else {
+            Err(format!("升级失败：{full_out}"))
+        }
+    })
+    .await
+    .map_err(|e| format!("Pi 升级任务异常：{e}"))?
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -815,14 +1084,20 @@ pub fn run() {
             workspace_current,
             workspace_open,
             workspace_create,
+            workspace_rename,
             workspace_delete,
             workspace_status,
             documents_list,
             document_read,
             relations_list,
+            relation_proposal_create,
+            relation_proposal_approve,
+            relation_proposal_reject,
+            relation_proposal_delete,
             kb_stats,
             kb_config_get,
             kb_config_set_include,
+            kb_config_set_exclude,
             document_search,
             index_run,
             draft_list,
@@ -830,6 +1105,8 @@ pub fn run() {
             draft_create,
             draft_apply,
             draft_reject,
+            draft_delete,
+            draft_delete_by_status,
             import_file,
             attachments_list,
             attachment_read,
@@ -846,6 +1123,8 @@ pub fn run() {
             pi_session_compact,
             pi_session_fork,
             pi_session_update_meta,
+            pi_environment_check,
+            pi_upgrade,
         ])
         .build(tauri::generate_context!())
         .expect("error while building LLM Wiki Desktop")
