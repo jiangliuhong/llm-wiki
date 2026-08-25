@@ -56,10 +56,9 @@ async function runSearch(query: string, options: SearchOptions, cmd: Command): P
   const json = options.json ?? false;
   const normalizedQuery = query.trim();
   if (normalizedQuery.length === 0) {
-    emitError(
-      new CliError("ARGS_EMPTY_QUERY", "Search query must not be empty.", ExitCode.ARGS),
-      { json },
-    );
+    emitError(new CliError("ARGS_EMPTY_QUERY", "Search query must not be empty.", ExitCode.ARGS), {
+      json,
+    });
     return;
   }
 
@@ -107,10 +106,7 @@ async function runSearch(query: string, options: SearchOptions, cmd: Command): P
       graph: options.graph ?? false,
     });
   } catch (err) {
-    emitError(
-      new CliError("DB_QUERY_FAILED", (err as Error).message, ExitCode.DB),
-      { json },
-    );
+    emitError(new CliError("DB_QUERY_FAILED", (err as Error).message, ExitCode.DB), { json });
     return;
   }
 

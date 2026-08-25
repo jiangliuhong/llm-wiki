@@ -20,9 +20,7 @@ import {
 import { findWorkspaceManifest } from "../utils/paths.js";
 
 export function makeWorkspaceCommand(): Command {
-  const command = new Command("workspace")
-    .alias("kb")
-    .description("Manage registered workspaces");
+  const command = new Command("workspace").alias("kb").description("Manage registered workspaces");
 
   command
     .command("create")
@@ -75,7 +73,11 @@ export function makeWorkspaceCommand(): Command {
         configPath: options.config,
         dbPath: options.db,
       });
-      ensureWorkspaceManifest(registry.knowledgeBases[id].root, id, registry.knowledgeBases[id].title);
+      ensureWorkspaceManifest(
+        registry.knowledgeBases[id].root,
+        id,
+        registry.knowledgeBases[id].title,
+      );
       saveRegistry(registry);
       logger.success(`Registered "${id}" → ${registry.knowledgeBases[id].root}`);
     });
@@ -126,12 +128,19 @@ export function makeWorkspaceCommand(): Command {
         workspace?: string;
         kb?: string;
       };
-      const requested = raw.workspace ?? raw.kb ?? process.env.LLM_WIKI_WORKSPACE ?? process.env.LLM_WIKI_KB;
+      const requested =
+        raw.workspace ?? raw.kb ?? process.env.LLM_WIKI_WORKSPACE ?? process.env.LLM_WIKI_KB;
       const registry = loadRegistry();
       const discovered = findWorkspaceManifest();
-      const requestedPath = requested && (requested === "." || requested === ".." || requested.startsWith("./") || requested.startsWith("../") || nodePath.isAbsolute(requested))
-        ? nodePath.resolve(process.cwd(), requested)
-        : undefined;
+      const requestedPath =
+        requested &&
+        (requested === "." ||
+          requested === ".." ||
+          requested.startsWith("./") ||
+          requested.startsWith("../") ||
+          nodePath.isAbsolute(requested))
+          ? nodePath.resolve(process.cwd(), requested)
+          : undefined;
       const pathWorkspace = requestedPath ? findWorkspaceManifest(requestedPath) : undefined;
       if (pathWorkspace) {
         const payload = {
@@ -170,10 +179,17 @@ export function makeWorkspaceCommand(): Command {
         const cwd = nodePath.resolve(process.cwd());
         return cwd === entry.root || cwd.startsWith(`${entry.root}${nodePath.sep}`);
       });
-      const resolvedId = id ?? candidates.sort((a, b) => b[1].root.length - a[1].root.length)[0]?.[0];
-      if (!resolvedId) throw new Error("No workspace could be resolved from the current directory.");
+      const resolvedId =
+        id ?? candidates.sort((a, b) => b[1].root.length - a[1].root.length)[0]?.[0];
+      if (!resolvedId)
+        throw new Error("No workspace could be resolved from the current directory.");
       const entry = resolveRegistryEntry(resolvedId, registry);
-      const payload = { id: resolvedId, title: entry.title, root: entry.root, resolvedBy: id ? "flag" : "cwd" };
+      const payload = {
+        id: resolvedId,
+        title: entry.title,
+        root: entry.root,
+        resolvedBy: id ? "flag" : "cwd",
+      };
       if (options.json) process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
       else {
         logger.success(`Workspace: ${payload.title}`);

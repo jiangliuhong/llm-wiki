@@ -3,7 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { confirm as confirmDialog, open as openDialog } from "@tauri-apps/plugin-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import RelationsView, { inTauriRuntime, type RelationProposal, type RelationsPayload } from "./RelationsView";
+import RelationsView, {
+  inTauriRuntime,
+  type RelationProposal,
+  type RelationsPayload,
+} from "./RelationsView";
 import SettingsView from "./SettingsView";
 import { useAgentChat } from "./useAgentChat";
 import type { AvailableModelItem, ChatMessageItem, SessionInfo, ToolCallItem } from "./agentClient";
@@ -160,7 +164,9 @@ function parseDraftResult(toolOrData: ToolCallItem | string | unknown): Draft | 
         targetPath: String(argsObj.targetPath || argsObj.target_path || "wiki/untitled.md"),
         operationType: String(argsObj.operationType || argsObj.operation_type || "create"),
         baseDocumentHash: String(argsObj.baseDocumentHash || argsObj.base_document_hash || ""),
-        generatedContent: String(argsObj.generatedContent || argsObj.generated_content || argsObj.content || ""),
+        generatedContent: String(
+          argsObj.generatedContent || argsObj.generated_content || argsObj.content || "",
+        ),
         sourceCitations: Array.isArray(argsObj.sourceCitations)
           ? (argsObj.sourceCitations as unknown[]).map(String)
           : Array.isArray(argsObj.source_citations)
@@ -178,8 +184,22 @@ function parseDraftResult(toolOrData: ToolCallItem | string | unknown): Draft | 
 
   const d = unwrapped as Record<string, unknown>;
   const draftId = String(d.draftId || d.draft_id || argsObj?.draftId || argsObj?.draft_id || "");
-  const targetPath = String(d.targetPath || d.target_path || argsObj?.targetPath || argsObj?.target_path || "wiki/untitled.md");
-  const generatedContent = String(d.generatedContent || d.generated_content || d.content || argsObj?.generatedContent || argsObj?.generated_content || argsObj?.content || "");
+  const targetPath = String(
+    d.targetPath ||
+      d.target_path ||
+      argsObj?.targetPath ||
+      argsObj?.target_path ||
+      "wiki/untitled.md",
+  );
+  const generatedContent = String(
+    d.generatedContent ||
+      d.generated_content ||
+      d.content ||
+      argsObj?.generatedContent ||
+      argsObj?.generated_content ||
+      argsObj?.content ||
+      "",
+  );
 
   if (!targetPath && !generatedContent && !draftId) {
     return null;
@@ -190,7 +210,13 @@ function parseDraftResult(toolOrData: ToolCallItem | string | unknown): Draft | 
     draftId,
     workspaceId: String(d.workspaceId || d.workspace_id || ""),
     targetPath,
-    operationType: String(d.operationType || d.operation_type || argsObj?.operationType || argsObj?.operation_type || "create"),
+    operationType: String(
+      d.operationType ||
+        d.operation_type ||
+        argsObj?.operationType ||
+        argsObj?.operation_type ||
+        "create",
+    ),
     baseDocumentHash: String(d.baseDocumentHash || d.base_document_hash || ""),
     generatedContent,
     sourceCitations: Array.isArray(d.sourceCitations)
@@ -232,7 +258,9 @@ function prettyRelationType(type: string): string {
   return map[type] ?? type.replace(/_/g, " ");
 }
 
-function parseRelationProposal(toolOrData: ToolCallItem | string | unknown): RelationProposal | null {
+function parseRelationProposal(
+  toolOrData: ToolCallItem | string | unknown,
+): RelationProposal | null {
   if (!toolOrData) return null;
 
   let raw: unknown = toolOrData;
@@ -240,7 +268,8 @@ function parseRelationProposal(toolOrData: ToolCallItem | string | unknown): Rel
 
   if (typeof toolOrData === "object" && toolOrData !== null && "toolName" in toolOrData) {
     const tool = toolOrData as ToolCallItem;
-    if (tool.toolName !== "relation_proposal_create" && tool.toolName !== "relation_proposal_list") return null;
+    if (tool.toolName !== "relation_proposal_create" && tool.toolName !== "relation_proposal_list")
+      return null;
     raw = tool.result;
     if (tool.args && typeof tool.args === "object") {
       argsObj = tool.args as Record<string, unknown>;
@@ -253,20 +282,43 @@ function parseRelationProposal(toolOrData: ToolCallItem | string | unknown): Rel
       const sourcePath = String(argsObj.sourcePath || argsObj.source_path || argsObj.source || "");
       const targetPath = String(argsObj.targetPath || argsObj.target_path || argsObj.target || "");
       if (!sourcePath || !targetPath) return null;
-      const evidence = (argsObj.evidence && typeof argsObj.evidence === "object") ? (argsObj.evidence as Record<string, unknown>) : null;
+      const evidence =
+        argsObj.evidence && typeof argsObj.evidence === "object"
+          ? (argsObj.evidence as Record<string, unknown>)
+          : null;
       return {
         id: Number(argsObj.id || 0),
         sourceFileId: null,
         targetFileId: null,
         sourcePath,
         targetPath,
-        relationType: String(argsObj.relationType || argsObj.relation_type || argsObj.type || "related_to"),
+        relationType: String(
+          argsObj.relationType || argsObj.relation_type || argsObj.type || "related_to",
+        ),
         confidence: Number(argsObj.confidence ?? 0.85),
         rationale: String(argsObj.rationale || argsObj.reason || ""),
-        evidencePath: String(argsObj.evidencePath || argsObj.evidence_path || evidence?.path || sourcePath),
-        evidenceStartLine: Number(argsObj.evidenceStartLine || argsObj.evidence_start_line || evidence?.startLine || evidence?.start_line || 1),
-        evidenceEndLine: Number(argsObj.evidenceEndLine || argsObj.evidence_end_line || evidence?.endLine || evidence?.end_line || 1),
-        evidenceText: argsObj.evidenceText ? String(argsObj.evidenceText) : evidence?.text ? String(evidence.text) : null,
+        evidencePath: String(
+          argsObj.evidencePath || argsObj.evidence_path || evidence?.path || sourcePath,
+        ),
+        evidenceStartLine: Number(
+          argsObj.evidenceStartLine ||
+            argsObj.evidence_start_line ||
+            evidence?.startLine ||
+            evidence?.start_line ||
+            1,
+        ),
+        evidenceEndLine: Number(
+          argsObj.evidenceEndLine ||
+            argsObj.evidence_end_line ||
+            evidence?.endLine ||
+            evidence?.end_line ||
+            1,
+        ),
+        evidenceText: argsObj.evidenceText
+          ? String(argsObj.evidenceText)
+          : evidence?.text
+            ? String(evidence.text)
+            : null,
         status: "pending",
         createdAt: new Date().toISOString(),
         reviewedAt: null,
@@ -276,13 +328,22 @@ function parseRelationProposal(toolOrData: ToolCallItem | string | unknown): Rel
   }
 
   const d = unwrapped as Record<string, unknown>;
-  const sourcePath = String(d.sourcePath || d.source_path || argsObj?.sourcePath || argsObj?.source_path || "");
-  const targetPath = String(d.targetPath || d.target_path || argsObj?.targetPath || argsObj?.target_path || "");
+  const sourcePath = String(
+    d.sourcePath || d.source_path || argsObj?.sourcePath || argsObj?.source_path || "",
+  );
+  const targetPath = String(
+    d.targetPath || d.target_path || argsObj?.targetPath || argsObj?.target_path || "",
+  );
   if (!sourcePath || !targetPath) {
     return null;
   }
 
-  const evidence = (d.evidence && typeof d.evidence === "object") ? (d.evidence as Record<string, unknown>) : (argsObj?.evidence && typeof argsObj?.evidence === "object") ? (argsObj?.evidence as Record<string, unknown>) : null;
+  const evidence =
+    d.evidence && typeof d.evidence === "object"
+      ? (d.evidence as Record<string, unknown>)
+      : argsObj?.evidence && typeof argsObj?.evidence === "object"
+        ? (argsObj?.evidence as Record<string, unknown>)
+        : null;
 
   return {
     id: Number(d.id || argsObj?.id || 0),
@@ -290,13 +351,41 @@ function parseRelationProposal(toolOrData: ToolCallItem | string | unknown): Rel
     targetFileId: d.targetFileId ? Number(d.targetFileId) : null,
     sourcePath,
     targetPath,
-    relationType: String(d.relationType || d.relation_type || argsObj?.relationType || argsObj?.relation_type || "related_to"),
+    relationType: String(
+      d.relationType ||
+        d.relation_type ||
+        argsObj?.relationType ||
+        argsObj?.relation_type ||
+        "related_to",
+    ),
     confidence: Number(d.confidence ?? argsObj?.confidence ?? 0.85),
     rationale: String(d.rationale || d.reason || argsObj?.rationale || argsObj?.reason || ""),
-    evidencePath: String(d.evidencePath || d.evidence_path || evidence?.path || argsObj?.evidencePath || sourcePath),
-    evidenceStartLine: Number(d.evidenceStartLine || d.evidence_start_line || evidence?.startLine || evidence?.start_line || argsObj?.evidenceStartLine || 1),
-    evidenceEndLine: Number(d.evidenceEndLine || d.evidence_end_line || evidence?.endLine || evidence?.end_line || argsObj?.evidenceEndLine || 1),
-    evidenceText: d.evidenceText ? String(d.evidenceText) : evidence?.text ? String(evidence.text) : argsObj?.evidenceText ? String(argsObj.evidenceText) : null,
+    evidencePath: String(
+      d.evidencePath || d.evidence_path || evidence?.path || argsObj?.evidencePath || sourcePath,
+    ),
+    evidenceStartLine: Number(
+      d.evidenceStartLine ||
+        d.evidence_start_line ||
+        evidence?.startLine ||
+        evidence?.start_line ||
+        argsObj?.evidenceStartLine ||
+        1,
+    ),
+    evidenceEndLine: Number(
+      d.evidenceEndLine ||
+        d.evidence_end_line ||
+        evidence?.endLine ||
+        evidence?.end_line ||
+        argsObj?.evidenceEndLine ||
+        1,
+    ),
+    evidenceText: d.evidenceText
+      ? String(d.evidenceText)
+      : evidence?.text
+        ? String(evidence.text)
+        : argsObj?.evidenceText
+          ? String(argsObj.evidenceText)
+          : null,
     status: String(d.status || "pending"),
     createdAt: String(d.createdAt || d.created_at || new Date().toISOString()),
     reviewedAt: d.reviewedAt ? String(d.reviewedAt) : null,
@@ -383,12 +472,19 @@ function DraftCard({
             }
 
             // If draftId wasn't found or wasn't set, try to match in draft_list
-            const list = await invoke<Draft[]>("draft_list", { root: workspace.root, status: null });
+            const list = await invoke<Draft[]>("draft_list", {
+              root: workspace.root,
+              status: null,
+            });
             if (!cancelled && list) {
-              const matched = list.find((d) =>
-                (parsed.draftId && d.draftId === parsed.draftId) ||
-                (d.targetPath === parsed.targetPath && d.generatedContent === parsed.generatedContent) ||
-                (d.targetPath === parsed.targetPath && d.operationType === parsed.operationType && d.status !== "pending")
+              const matched = list.find(
+                (d) =>
+                  (parsed.draftId && d.draftId === parsed.draftId) ||
+                  (d.targetPath === parsed.targetPath &&
+                    d.generatedContent === parsed.generatedContent) ||
+                  (d.targetPath === parsed.targetPath &&
+                    d.operationType === parsed.operationType &&
+                    d.status !== "pending"),
               );
               if (matched) {
                 setDraftState(matched);
@@ -428,17 +524,28 @@ function DraftCard({
           operationType: draftState.operationType,
           baseDocumentHash: draftState.baseDocumentHash || null,
           generatedContent: draftState.generatedContent,
-          sourceCitations: draftState.sourceCitations.length > 0 ? draftState.sourceCitations : null,
+          sourceCitations:
+            draftState.sourceCitations.length > 0 ? draftState.sourceCitations : null,
           sectionSlug: draftState.sectionSlug || null,
           createdBy: "ai-chat",
         });
-        effectiveDraftId = created.draftId || (created as unknown as { draft_id?: string }).draft_id || "";
+        effectiveDraftId =
+          created.draftId || (created as unknown as { draft_id?: string }).draft_id || "";
         setDraftState({
           ...created,
           draftId: effectiveDraftId,
-          targetPath: created.targetPath || (created as unknown as { target_path?: string }).target_path || draftState.targetPath,
-          operationType: created.operationType || (created as unknown as { operation_type?: string }).operation_type || draftState.operationType,
-          generatedContent: created.generatedContent || (created as unknown as { generated_content?: string }).generated_content || draftState.generatedContent,
+          targetPath:
+            created.targetPath ||
+            (created as unknown as { target_path?: string }).target_path ||
+            draftState.targetPath,
+          operationType:
+            created.operationType ||
+            (created as unknown as { operation_type?: string }).operation_type ||
+            draftState.operationType,
+          generatedContent:
+            created.generatedContent ||
+            (created as unknown as { generated_content?: string }).generated_content ||
+            draftState.generatedContent,
         });
       }
 
@@ -451,8 +558,15 @@ function DraftCard({
         draftId: effectiveDraftId,
       });
       setAppliedResult(result);
-      setDraftState((prev) => (prev ? { ...prev, status: "applied", draftId: effectiveDraftId } : null));
-      if (tool && typeof tool === "object" && typeof tool.result === "object" && tool.result !== null) {
+      setDraftState((prev) =>
+        prev ? { ...prev, status: "applied", draftId: effectiveDraftId } : null,
+      );
+      if (
+        tool &&
+        typeof tool === "object" &&
+        typeof tool.result === "object" &&
+        tool.result !== null
+      ) {
         (tool.result as Record<string, unknown>).status = "applied";
         if (effectiveDraftId) {
           (tool.result as Record<string, unknown>).draftId = effectiveDraftId;
@@ -481,11 +595,13 @@ function DraftCard({
           operationType: draftState.operationType,
           baseDocumentHash: draftState.baseDocumentHash || null,
           generatedContent: draftState.generatedContent,
-          sourceCitations: draftState.sourceCitations.length > 0 ? draftState.sourceCitations : null,
+          sourceCitations:
+            draftState.sourceCitations.length > 0 ? draftState.sourceCitations : null,
           sectionSlug: draftState.sectionSlug || null,
           createdBy: "ai-chat",
         });
-        effectiveDraftId = created.draftId || (created as unknown as { draft_id?: string }).draft_id || "";
+        effectiveDraftId =
+          created.draftId || (created as unknown as { draft_id?: string }).draft_id || "";
       }
       if (effectiveDraftId) {
         await invoke<Draft>("draft_reject", {
@@ -493,8 +609,15 @@ function DraftCard({
           draftId: effectiveDraftId,
         });
       }
-      setDraftState((prev) => (prev ? { ...prev, status: "rejected", draftId: effectiveDraftId } : null));
-      if (tool && typeof tool === "object" && typeof tool.result === "object" && tool.result !== null) {
+      setDraftState((prev) =>
+        prev ? { ...prev, status: "rejected", draftId: effectiveDraftId } : null,
+      );
+      if (
+        tool &&
+        typeof tool === "object" &&
+        typeof tool.result === "object" &&
+        tool.result !== null
+      ) {
         (tool.result as Record<string, unknown>).status = "rejected";
         if (effectiveDraftId) {
           (tool.result as Record<string, unknown>).draftId = effectiveDraftId;
@@ -525,9 +648,7 @@ function DraftCard({
       </div>
 
       {draftState.sourceCitations && draftState.sourceCitations.length > 0 && (
-        <div className="msg-draft-citations">
-          引用来源: {draftState.sourceCitations.join(", ")}
-        </div>
+        <div className="msg-draft-citations">引用来源: {draftState.sourceCitations.join(", ")}</div>
       )}
 
       {actionError && (
@@ -538,7 +659,8 @@ function DraftCard({
 
       {appliedResult && (
         <div className="msg-draft-success">
-          <Icon name="check" size={14} /> 已成功写入工作区（{appliedResult.bytesWritten} 字节）并自动触发索引
+          <Icon name="check" size={14} /> 已成功写入工作区（{appliedResult.bytesWritten}{" "}
+          字节）并自动触发索引
         </div>
       )}
 
@@ -548,7 +670,9 @@ function DraftCard({
             <button
               className="primary-button small"
               onClick={() => void handleApply()}
-              disabled={applying || rejecting || (!draftState.draftId && !draftState.generatedContent)}
+              disabled={
+                applying || rejecting || (!draftState.draftId && !draftState.generatedContent)
+              }
             >
               <Icon name="check" size={13} />
               {applying ? "正在写入…" : "确认写入知识库"}
@@ -576,10 +700,7 @@ function DraftCard({
         )}
 
         {draftState.generatedContent && (
-          <button
-            className="tool-button small"
-            onClick={() => setShowPreview(!showPreview)}
-          >
+          <button className="tool-button small" onClick={() => setShowPreview(!showPreview)}>
             {showPreview ? "收起预览" : "预览内容"}
           </button>
         )}
@@ -598,9 +719,7 @@ function DraftCard({
             overflowY: "auto",
           }}
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {draftState.generatedContent}
-          </ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{draftState.generatedContent}</ReactMarkdown>
         </div>
       )}
     </div>
@@ -635,7 +754,9 @@ function RelationProposalsCard({
     if (workspace && inTauriRuntime() && proposals.length > 0) {
       const syncWithDb = async (): Promise<void> => {
         try {
-          const payload = await invoke<RelationsPayload>("relations_list", { root: workspace.root });
+          const payload = await invoke<RelationsPayload>("relations_list", {
+            root: workspace.root,
+          });
           if (cancelled || !payload) return;
 
           setProposalStates((currentList) => {
@@ -713,9 +834,14 @@ function RelationProposalsCard({
     try {
       let effId = p.id;
       if (!effId || effId <= 0) {
-        const existingList = await invoke<RelationsPayload>("relations_list", { root: workspace.root }).catch(() => null);
+        const existingList = await invoke<RelationsPayload>("relations_list", {
+          root: workspace.root,
+        }).catch(() => null);
         const existing = existingList?.proposals.find(
-          (item) => item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType,
+          (item) =>
+            item.sourcePath === p.sourcePath &&
+            item.targetPath === p.targetPath &&
+            item.relationType === p.relationType,
         );
         if (existing && existing.id > 0) {
           effId = existing.id;
@@ -741,9 +867,15 @@ function RelationProposalsCard({
         await invoke("relation_proposal_approve", { root: workspace.root, id: effId });
       }
       setProposalStates((prev) =>
-        prev.map((item, i) => (i === idx || (item.id && item.id === p.id) ? { ...item, id: effId, status: "approved" } : item)),
+        prev.map((item, i) =>
+          i === idx || (item.id && item.id === p.id)
+            ? { ...item, id: effId, status: "approved" }
+            : item,
+        ),
       );
-      setSuccessMessage(`已批准「${docName(p.sourcePath)} → ${docName(p.targetPath)}」进入关系图谱`);
+      setSuccessMessage(
+        `已批准「${docName(p.sourcePath)} → ${docName(p.targetPath)}」进入关系图谱`,
+      );
     } catch (err) {
       setActionError(String(err));
     } finally {
@@ -758,9 +890,14 @@ function RelationProposalsCard({
     try {
       let effId = p.id;
       if (!effId || effId <= 0) {
-        const existingList = await invoke<RelationsPayload>("relations_list", { root: workspace.root }).catch(() => null);
+        const existingList = await invoke<RelationsPayload>("relations_list", {
+          root: workspace.root,
+        }).catch(() => null);
         const existing = existingList?.proposals.find(
-          (item) => item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType,
+          (item) =>
+            item.sourcePath === p.sourcePath &&
+            item.targetPath === p.targetPath &&
+            item.relationType === p.relationType,
         );
         if (existing && existing.id > 0) {
           effId = existing.id;
@@ -786,7 +923,11 @@ function RelationProposalsCard({
         await invoke("relation_proposal_reject", { root: workspace.root, id: effId });
       }
       setProposalStates((prev) =>
-        prev.map((item, i) => (i === idx || (item.id && item.id === p.id) ? { ...item, id: effId, status: "rejected" } : item)),
+        prev.map((item, i) =>
+          i === idx || (item.id && item.id === p.id)
+            ? { ...item, id: effId, status: "rejected" }
+            : item,
+        ),
       );
       setSuccessMessage(`已忽略该关系提案`);
     } catch (err) {
@@ -801,14 +942,19 @@ function RelationProposalsCard({
     setApprovingAll(true);
     setActionError(null);
     try {
-      const existingList = await invoke<RelationsPayload>("relations_list", { root: workspace.root }).catch(() => null);
+      const existingList = await invoke<RelationsPayload>("relations_list", {
+        root: workspace.root,
+      }).catch(() => null);
       const updatedStates = [...proposalStates];
 
       for (const p of pendingList) {
         let effId = p.id;
         if (!effId || effId <= 0) {
           const existing = existingList?.proposals.find(
-            (item) => item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType,
+            (item) =>
+              item.sourcePath === p.sourcePath &&
+              item.targetPath === p.targetPath &&
+              item.relationType === p.relationType,
           );
           if (existing && existing.id > 0) {
             effId = existing.id;
@@ -834,7 +980,11 @@ function RelationProposalsCard({
           await invoke("relation_proposal_approve", { root: workspace.root, id: effId });
         }
         const idx = updatedStates.findIndex(
-          (item) => (p.id > 0 && item.id === p.id) || (item.sourcePath === p.sourcePath && item.targetPath === p.targetPath && item.relationType === p.relationType),
+          (item) =>
+            (p.id > 0 && item.id === p.id) ||
+            (item.sourcePath === p.sourcePath &&
+              item.targetPath === p.targetPath &&
+              item.relationType === p.relationType),
         );
         if (idx >= 0 && updatedStates[idx]) {
           const current = updatedStates[idx]!;
@@ -852,13 +1002,15 @@ function RelationProposalsCard({
 
   const handleReanalyzeAll = (): void => {
     if (onSendPrompt) {
-      const prompt = "请使用 document_list 和 document_read 工具全面阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具为发现的文档间依赖 (depends_on)、实现 (implements)、能力继承 (extends) 或重要语义引用关系创建带行号证据的关系提案。";
+      const prompt =
+        "请使用 document_list 和 document_read 工具全面阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具为发现的文档间依赖 (depends_on)、实现 (implements)、能力继承 (extends) 或重要语义引用关系创建带行号证据的关系提案。";
       onSendPrompt(prompt);
     }
   };
 
   const singleSource = proposalStates[0]?.sourcePath;
-  const isSingleSource = proposalStates.length > 0 && proposalStates.every((p) => p.sourcePath === singleSource);
+  const isSingleSource =
+    proposalStates.length > 0 && proposalStates.every((p) => p.sourcePath === singleSource);
 
   const handleReanalyzeSource = (): void => {
     if (onSendPrompt && singleSource) {
@@ -872,11 +1024,11 @@ function RelationProposalsCard({
       <div className="msg-relation-group-header">
         <div className="msg-relation-group-title">
           <Icon name="network" size={16} />
-          <span className="msg-relation-title-text">
-            AI 挖掘关系提案
-          </span>
+          <span className="msg-relation-title-text">AI 挖掘关系提案</span>
           <span className="msg-relation-count-badge">
-            {pendingList.length > 0 ? `${pendingList.length} 条待审核` : `共 ${proposalStates.length} 条已处理`}
+            {pendingList.length > 0
+              ? `${pendingList.length} 条待审核`
+              : `共 ${proposalStates.length} 条已处理`}
           </span>
         </div>
         <div className="msg-relation-header-actions">
@@ -931,16 +1083,26 @@ function RelationProposalsCard({
           const isApproved = p.status === "approved";
           const isRejected = p.status === "rejected";
           const isExpanded = expandedIdx === idx;
-          const busy = (approvingId === (p.id || idx + 1)) || (rejectingId === (p.id || idx + 1)) || approvingAll;
+          const busy =
+            approvingId === (p.id || idx + 1) || rejectingId === (p.id || idx + 1) || approvingAll;
 
           return (
-            <div key={p.id ? `p-${p.id}` : `idx-${idx}`} className={`msg-relation-item ${p.status}`}>
+            <div
+              key={p.id ? `p-${p.id}` : `idx-${idx}`}
+              className={`msg-relation-item ${p.status}`}
+            >
               <div className="msg-relation-item-main">
                 <div className="msg-relation-item-route">
-                  <span className="msg-relation-doc-name" title={p.sourcePath}>{docName(p.sourcePath)}</span>
+                  <span className="msg-relation-doc-name" title={p.sourcePath}>
+                    {docName(p.sourcePath)}
+                  </span>
                   <span className="msg-relation-arrow">→</span>
-                  <span className="msg-relation-doc-name" title={p.targetPath}>{docName(p.targetPath)}</span>
-                  <span className={`msg-relation-type-tag type-${p.relationType.replace(/[^a-zA-Z0-9]/g, "-")}`}>
+                  <span className="msg-relation-doc-name" title={p.targetPath}>
+                    {docName(p.targetPath)}
+                  </span>
+                  <span
+                    className={`msg-relation-type-tag type-${p.relationType.replace(/[^a-zA-Z0-9]/g, "-")}`}
+                  >
                     {prettyRelationType(p.relationType)}
                   </span>
                   <span className="msg-relation-conf-tag">
@@ -948,17 +1110,15 @@ function RelationProposalsCard({
                   </span>
                 </div>
 
-                {p.rationale && (
-                  <div className="msg-relation-rationale">
-                    {p.rationale}
-                  </div>
-                )}
+                {p.rationale && <div className="msg-relation-rationale">{p.rationale}</div>}
 
                 {(p.evidenceText || p.evidencePath) && (
                   <div className="msg-relation-evidence-box">
                     <div className="msg-relation-evidence-loc">
                       <Icon name="file" size={11} />
-                      <code>{p.evidencePath}:{p.evidenceStartLine}-{p.evidenceEndLine}</code>
+                      <code>
+                        {p.evidencePath}:{p.evidenceStartLine}-{p.evidenceEndLine}
+                      </code>
                       {p.evidenceText && (
                         <button
                           type="button"
@@ -970,9 +1130,7 @@ function RelationProposalsCard({
                       )}
                     </div>
                     {isExpanded && p.evidenceText && (
-                      <div className="msg-relation-evidence-text">
-                        "{p.evidenceText}"
-                      </div>
+                      <div className="msg-relation-evidence-text">"{p.evidenceText}"</div>
                     )}
                   </div>
                 )}
@@ -1004,11 +1162,7 @@ function RelationProposalsCard({
                     <Icon name="check" size={12} /> 已批准入图
                   </span>
                 )}
-                {isRejected && (
-                  <span className="msg-relation-status-badge rejected">
-                    已忽略
-                  </span>
-                )}
+                {isRejected && <span className="msg-relation-status-badge rejected">已忽略</span>}
               </div>
             </div>
           );
@@ -1065,10 +1219,12 @@ function readStoredWorkspaces(): WorkspaceInfo[] {
     return value.filter((item): item is WorkspaceInfo => {
       if (!item || typeof item !== "object") return false;
       const candidate = item as Record<string, unknown>;
-      return typeof candidate.id === "string"
-        && typeof candidate.title === "string"
-        && typeof candidate.root === "string"
-        && candidate.resolvedBy !== "default";
+      return (
+        typeof candidate.id === "string" &&
+        typeof candidate.title === "string" &&
+        typeof candidate.root === "string" &&
+        candidate.resolvedBy !== "default"
+      );
     });
   } catch {
     return [];
@@ -1085,42 +1241,191 @@ function saveStoredWorkspaces(workspaces: WorkspaceInfo[]): void {
 
 // --- Unified SVG Icon System ---
 const ICON_PATHS: Record<string, React.ReactNode> = {
-  spark: (<><path d="M12 2.8c.4 4.8 2.4 6.8 7.2 7.2-4.8.4-6.8 2.4-7.2 7.2-.4-4.8-2.4-6.8-7.2-7.2 4.8-.4 6.8-2.4 7.2-7.2Z" /><path d="M19 15.6c.2 2.1 1.1 3 3.2 3.2-2.1.2-3 1.1-3.2 3.2-.2-2.1-1.1-3-3.2-3.2 2.1-.2 3-1.1 3.2-3.2Z" fill="currentColor" stroke="none" /></>),
-  file: (<><path d="M6 3.5h8.5L19 8v12.5H6v-17Z" /><path d="M14.5 3.5V8H19M9 12h7M9 15h7M9 18h4" /></>),
-  network: (<><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></>),
-  import: (<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></>),
-  draft: (<><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></>),
-  tasks: (<><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>),
-  settings: (<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" /></>),
-  search: (<><circle cx="10.5" cy="10.5" r="6.2" /><path d="m15.2 15.2 4.3 4.3" /></>),
+  spark: (
+    <>
+      <path d="M12 2.8c.4 4.8 2.4 6.8 7.2 7.2-4.8.4-6.8 2.4-7.2 7.2-.4-4.8-2.4-6.8-7.2-7.2 4.8-.4 6.8-2.4 7.2-7.2Z" />
+      <path
+        d="M19 15.6c.2 2.1 1.1 3 3.2 3.2-2.1.2-3 1.1-3.2 3.2-.2-2.1-1.1-3-3.2-3.2 2.1-.2 3-1.1 3.2-3.2Z"
+        fill="currentColor"
+        stroke="none"
+      />
+    </>
+  ),
+  file: (
+    <>
+      <path d="M6 3.5h8.5L19 8v12.5H6v-17Z" />
+      <path d="M14.5 3.5V8H19M9 12h7M9 15h7M9 18h4" />
+    </>
+  ),
+  network: (
+    <>
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" />
+    </>
+  ),
+  import: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="17 8 12 3 7 8" />
+      <line x1="12" y1="3" x2="12" y2="15" />
+    </>
+  ),
+  draft: (
+    <>
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </>
+  ),
+  tasks: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </>
+  ),
+  settings: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.2" />
+      <path d="m15.2 15.2 4.3 4.3" />
+    </>
+  ),
   plus: <path d="M12 5v14M5 12h14" />,
-  trash: (<><path d="M4 7h16" /><path d="M10 11v6M14 11v6" /><path d="M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7" /><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" /></>),
+  trash: (
+    <>
+      <path d="M4 7h16" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7" />
+      <path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2" />
+    </>
+  ),
   refresh: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4" />,
   close: <path d="m6 6 12 12M18 6 6 18" />,
   check: <path d="m6.5 12.5 3.4 3.4 7.6-8" />,
   chevron: <path d="m7 9.5 5 5 5-5" />,
-  folder: (<><path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7Z" /><path d="M3.5 11.5h17" /></>),
-  copy: (<><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>),
-  database: (<><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></>),
-  terminal: (<><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></>),
-  shield: (<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></>),
-  link: <path d="m9.5 14.5 5-5M7.8 17.5l-1.3 1.3a3.7 3.7 0 1 1-5.3-5.3l3-3a3.7 3.7 0 0 1 5.3 0M16.2 6.5l1.3-1.3a3.7 3.7 0 1 1 5.3 5.3l-3 3a3.7 3.7 0 0 1-5.3 0" />,
-  arrowUp: (<><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>),
-  arrowRight: (<><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></>),
+  folder: (
+    <>
+      <path d="M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V7Z" />
+      <path d="M3.5 11.5h17" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </>
+  ),
+  database: (
+    <>
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+    </>
+  ),
+  terminal: (
+    <>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </>
+  ),
+  link: (
+    <path d="m9.5 14.5 5-5M7.8 17.5l-1.3 1.3a3.7 3.7 0 1 1-5.3-5.3l3-3a3.7 3.7 0 0 1 5.3 0M16.2 6.5l1.3-1.3a3.7 3.7 0 1 1 5.3 5.3l-3 3a3.7 3.7 0 0 1-5.3 0" />
+  ),
+  arrowUp: (
+    <>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
+    </>
+  ),
+  arrowRight: (
+    <>
+      <line x1="5" y1="12" x2="19" y2="12" />
+      <polyline points="12 5 19 12 12 19" />
+    </>
+  ),
   stop: <rect x="6" y="6" width="12" height="12" rx="2" />,
-  pin: <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />,
-  list: (<><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></>),
-  tree: (<><path d="M17 19h4" /><path d="M9 19h4" /><path d="M17 5h4" /><path d="M9 5h4" /><path d="M9 12h12" /><path d="M5 3v18" /></>),
+  pin: (
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+  ),
+  list: (
+    <>
+      <line x1="8" y1="6" x2="21" y2="6" />
+      <line x1="8" y1="12" x2="21" y2="12" />
+      <line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" />
+      <line x1="3" y1="12" x2="3.01" y2="12" />
+      <line x1="3" y1="18" x2="3.01" y2="18" />
+    </>
+  ),
+  tree: (
+    <>
+      <path d="M17 19h4" />
+      <path d="M9 19h4" />
+      <path d="M17 5h4" />
+      <path d="M9 5h4" />
+      <path d="M9 12h12" />
+      <path d="M5 3v18" />
+    </>
+  ),
   chevronRight: <polyline points="9 18 15 12 9 6" />,
   chevronDown: <polyline points="6 9 12 15 18 9" />,
-  panelLeft: (<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /></>),
-  panelLeftClose: (<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /><polyline points="15 9 12 12 15 15" /></>),
-  panelLeftOpen: (<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" /><polyline points="13 15 16 12 13 9" /></>),
+  panelLeft: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </>
+  ),
+  panelLeftClose: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+      <polyline points="15 9 12 12 15 15" />
+    </>
+  ),
+  panelLeftOpen: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+      <polyline points="13 15 16 12 13 9" />
+    </>
+  ),
 };
 
-function Icon({ name, size = 16, strokeWidth = 1.7, className }: { name: string; size?: number; strokeWidth?: number; className?: string }): React.ReactElement {
+function Icon({
+  name,
+  size = 16,
+  strokeWidth = 1.7,
+  className,
+}: {
+  name: string;
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+}): React.ReactElement {
   return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       {ICON_PATHS[name] ?? null}
     </svg>
   );
@@ -1207,7 +1512,9 @@ export default function App(): React.ReactElement {
         .catch(() => null);
     };
     void restoreRecentWorkspace()
-      .then((restored) => (restored ? Promise.resolve(restored) : invoke<WorkspaceInfo>("workspace_current")))
+      .then((restored) =>
+        restored ? Promise.resolve(restored) : invoke<WorkspaceInfo>("workspace_current"),
+      )
       .then((current) => {
         setWorkspace(current);
         if (current.resolvedBy !== "default") {
@@ -1235,9 +1542,15 @@ export default function App(): React.ReactElement {
     }
     let cancelled = false;
     void invoke<KbStats>("kb_stats", { root: workspace.root })
-      .then((stats) => { if (!cancelled) setKbStats(stats); })
-      .catch(() => { if (!cancelled) setKbStats(null); });
-    return () => { cancelled = true; };
+      .then((stats) => {
+        if (!cancelled) setKbStats(stats);
+      })
+      .catch(() => {
+        if (!cancelled) setKbStats(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [workspace, statsRefreshKey]);
 
   const focusSearch = (): void => {
@@ -1255,11 +1568,9 @@ export default function App(): React.ReactElement {
     const onSidebarShortcut = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         const target = event.target as HTMLElement | null;
-        const isInput = target && (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        );
+        const isInput =
+          target &&
+          (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
         if (!isInput) {
           event.preventDefault();
           setIsSidebarCollapsed((prev) => !prev);
@@ -1308,7 +1619,9 @@ export default function App(): React.ReactElement {
     });
     setKnownWorkspaces((previous) => {
       const next = previous.map((w) =>
-        w.root === updated.root || (updated.id && w.id === updated.id) ? { ...w, title: updated.title } : w
+        w.root === updated.root || (updated.id && w.id === updated.id)
+          ? { ...w, title: updated.title }
+          : w,
       );
       saveStoredWorkspaces(next);
       return next;
@@ -1414,7 +1727,10 @@ export default function App(): React.ReactElement {
   const currentSidebarWidth = isSidebarCollapsed ? 58 : sidebarWidth;
 
   return (
-    <main className={isResizing ? "desktop-shell is-resizing" : "desktop-shell"} style={{ "--sidebar-width": `${currentSidebarWidth}px` } as React.CSSProperties}>
+    <main
+      className={isResizing ? "desktop-shell is-resizing" : "desktop-shell"}
+      style={{ "--sidebar-width": `${currentSidebarWidth}px` } as React.CSSProperties}
+    >
       <div className="body-grid">
         <aside className={isSidebarCollapsed ? "sidebar is-collapsed" : "sidebar"}>
           <div className="sidebar-header">
@@ -1424,7 +1740,10 @@ export default function App(): React.ReactElement {
                 aria-label="切换工作空间"
                 title={isSidebarCollapsed ? (workspace?.title ?? "LLM Wiki") : undefined}
                 aria-expanded={workspaceMenuOpen}
-                onClick={() => { setWorkspaceMenuOpen((open) => !open); setWorkspaceError(null); }}
+                onClick={() => {
+                  setWorkspaceMenuOpen((open) => !open);
+                  setWorkspaceError(null);
+                }}
               >
                 <span className="workspace-avatar">{workspace?.title.slice(0, 2) ?? "LW"}</span>
                 <span className="workspace-info-text">
@@ -1451,9 +1770,14 @@ export default function App(): React.ReactElement {
                   className={view === item.id ? "nav-item active" : "nav-item"}
                   key={item.id}
                   title={isSidebarCollapsed ? item.label : undefined}
-                  onClick={() => { setView(item.id); setPendingDocFileId(null); }}
+                  onClick={() => {
+                    setView(item.id);
+                    setPendingDocFileId(null);
+                  }}
                 >
-                  <span className="nav-item-icon"><Icon name={item.icon} size={15} /></span>
+                  <span className="nav-item-icon">
+                    <Icon name={item.icon} size={15} />
+                  </span>
                   <span className="nav-item-label">{item.label}</span>
                 </button>
               ))}
@@ -1563,7 +1887,13 @@ export default function App(): React.ReactElement {
           </div>
 
           {view !== "chat" && (
-            <div className={view === "documents" || view === "relations" || view === "settings" ? "content-pane documents-pane" : "content-pane"}>
+            <div
+              className={
+                view === "documents" || view === "relations" || view === "settings"
+                  ? "content-pane documents-pane"
+                  : "content-pane"
+              }
+            >
               {view === "documents" && (
                 <DocumentsView
                   workspace={workspace}
@@ -1582,9 +1912,19 @@ export default function App(): React.ReactElement {
                   onIndexed={() => setStatsRefreshKey((k) => k + 1)}
                 />
               )}
-              {view === "imports" && <ImportsView workspace={workspace} onImported={() => setStatsRefreshKey((k) => k + 1)} />}
+              {view === "imports" && (
+                <ImportsView
+                  workspace={workspace}
+                  onImported={() => setStatsRefreshKey((k) => k + 1)}
+                />
+              )}
               {view === "drafts" && <DraftsView workspace={workspace} />}
-              {view === "tasks" && <TasksView workspace={workspace} onIndexed={() => setStatsRefreshKey((k) => k + 1)} />}
+              {view === "tasks" && (
+                <TasksView
+                  workspace={workspace}
+                  onIndexed={() => setStatsRefreshKey((k) => k + 1)}
+                />
+              )}
               {view === "settings" && (
                 <SettingsView
                   workspace={workspace}
@@ -1605,7 +1945,9 @@ export default function App(): React.ReactElement {
           <span className={kbStats?.tablesOk ? "status-dot" : "status-dot idle"} />
           <span>{workspace?.title ?? "未选择工作区"}</span>
           {kbStats && kbStats.tablesOk ? (
-            <span className="statusbar-pill">{kbStats.files} 篇文档 · {kbStats.chunks} 切片</span>
+            <span className="statusbar-pill">
+              {kbStats.files} 篇文档 · {kbStats.chunks} 切片
+            </span>
           ) : (
             <span className="statusbar-pill">{workspace ? "尚未索引" : "无连接"}</span>
           )}
@@ -1622,8 +1964,28 @@ export default function App(): React.ReactElement {
 
       {workspaceMenuOpen && (
         <>
-          <button className="workspace-modal-backdrop" type="button" aria-label="关闭工作区选择器" onClick={() => setWorkspaceMenuOpen(false)} />
-          <WorkspaceMenu mode={workspaceMode} setMode={setWorkspaceMode} workspace={workspace} workspaces={knownWorkspaces} onSelect={selectWorkspace} onDelete={forgetWorkspace} path={workspacePath} setPath={setWorkspacePath} title={workspaceTitle} setTitle={setWorkspaceTitle} onOpen={openWorkspace} onCreate={createWorkspace} onClose={() => setWorkspaceMenuOpen(false)} error={workspaceError} />
+          <button
+            className="workspace-modal-backdrop"
+            type="button"
+            aria-label="关闭工作区选择器"
+            onClick={() => setWorkspaceMenuOpen(false)}
+          />
+          <WorkspaceMenu
+            mode={workspaceMode}
+            setMode={setWorkspaceMode}
+            workspace={workspace}
+            workspaces={knownWorkspaces}
+            onSelect={selectWorkspace}
+            onDelete={forgetWorkspace}
+            path={workspacePath}
+            setPath={setWorkspacePath}
+            title={workspaceTitle}
+            setTitle={setWorkspaceTitle}
+            onOpen={openWorkspace}
+            onCreate={createWorkspace}
+            onClose={() => setWorkspaceMenuOpen(false)}
+            error={workspaceError}
+          />
         </>
       )}
     </main>
@@ -1647,7 +2009,22 @@ interface WorkspaceMenuProps {
   error: string | null;
 }
 
-function WorkspaceMenu({ mode, setMode, workspace, workspaces, onSelect, onDelete, path, setPath, title, setTitle, onOpen, onCreate, onClose, error }: WorkspaceMenuProps): React.ReactElement {
+function WorkspaceMenu({
+  mode,
+  setMode,
+  workspace,
+  workspaces,
+  onSelect,
+  onDelete,
+  path,
+  setPath,
+  title,
+  setTitle,
+  onOpen,
+  onCreate,
+  onClose,
+  error,
+}: WorkspaceMenuProps): React.ReactElement {
   const [pendingDelete, setPendingDelete] = useState<WorkspaceInfo | null>(null);
   const [deleting, setDeleting] = useState(false);
   const handleDelete = async (target: WorkspaceInfo, purge: boolean): Promise<void> => {
@@ -1684,40 +2061,92 @@ function WorkspaceMenu({ mode, setMode, workspace, workspaces, onSelect, onDelet
         </button>
       </div>
       <div className="workspace-tabs">
-        <button className={mode === "recent" ? "active" : ""} onClick={() => setMode("recent")}>最近使用</button>
-        <button className={mode === "open" ? "active" : ""} onClick={() => setMode("open")}>打开目录</button>
-        <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")}>新建工作区</button>
+        <button className={mode === "recent" ? "active" : ""} onClick={() => setMode("recent")}>
+          最近使用
+        </button>
+        <button className={mode === "open" ? "active" : ""} onClick={() => setMode("open")}>
+          打开目录
+        </button>
+        <button className={mode === "create" ? "active" : ""} onClick={() => setMode("create")}>
+          新建工作区
+        </button>
       </div>
       {mode === "recent" && (
         <div className="workspace-list">
-          {workspaces.length === 0 && <p className="menu-empty" style={{ textAlign: "center", padding: "20px", color: "var(--text-muted)", fontSize: "12px" }}>还没有历史记录，打开一个本地工作区开始使用。</p>}
+          {workspaces.length === 0 && (
+            <p
+              className="menu-empty"
+              style={{
+                textAlign: "center",
+                padding: "20px",
+                color: "var(--text-muted)",
+                fontSize: "12px",
+              }}
+            >
+              还没有历史记录，打开一个本地工作区开始使用。
+            </p>
+          )}
           {workspaces.map((item) => {
             if (pendingDelete?.id === item.id) {
               return (
                 <div key={item.id} className="workspace-entry-confirm">
                   <div className="workspace-entry-confirm-message">
                     <strong>{item.title}</strong>
-                    <span>删除后不可恢复。「移除记录」仅清理列表，「删除文件」将清理 .llm-wiki 配置。</span>
+                    <span>
+                      删除后不可恢复。「移除记录」仅清理列表，「删除文件」将清理 .llm-wiki 配置。
+                    </span>
                   </div>
                   <div className="workspace-entry-confirm-actions">
-                    <button className="confirm-remove" disabled={deleting} onClick={() => void handleDelete(item, false)}>移除记录</button>
-                    <button className="confirm-purge" disabled={deleting} onClick={() => void handleDelete(item, true)}>删除文件</button>
-                    <button className="confirm-cancel" disabled={deleting} onClick={() => setPendingDelete(null)}>取消</button>
+                    <button
+                      className="confirm-remove"
+                      disabled={deleting}
+                      onClick={() => void handleDelete(item, false)}
+                    >
+                      移除记录
+                    </button>
+                    <button
+                      className="confirm-purge"
+                      disabled={deleting}
+                      onClick={() => void handleDelete(item, true)}
+                    >
+                      删除文件
+                    </button>
+                    <button
+                      className="confirm-cancel"
+                      disabled={deleting}
+                      onClick={() => setPendingDelete(null)}
+                    >
+                      取消
+                    </button>
                   </div>
                 </div>
               );
             }
             return (
               <div key={item.id} className="workspace-entry-row">
-                <button className={item.id === workspace?.id ? "workspace-entry active" : "workspace-entry"} onClick={() => void onSelect(item)}>
+                <button
+                  className={
+                    item.id === workspace?.id ? "workspace-entry active" : "workspace-entry"
+                  }
+                  onClick={() => void onSelect(item)}
+                >
                   <span className="workspace-entry-avatar">{item.title.slice(0, 2)}</span>
                   <span>
                     <strong>{item.title}</strong>
                     <small>{item.root}</small>
                   </span>
-                  {item.id === workspace?.id && <span className="workspace-check"><Icon name="check" size={14} /></span>}
+                  {item.id === workspace?.id && (
+                    <span className="workspace-check">
+                      <Icon name="check" size={14} />
+                    </span>
+                  )}
                 </button>
-                <button className="workspace-entry-delete" aria-label={`删除工作区 ${item.title}`} disabled={deleting} onClick={() => setPendingDelete(item)}>
+                <button
+                  className="workspace-entry-delete"
+                  aria-label={`删除工作区 ${item.title}`}
+                  disabled={deleting}
+                  onClick={() => setPendingDelete(item)}
+                >
                   <Icon name="trash" size={13} />
                 </button>
               </div>
@@ -1730,20 +2159,45 @@ function WorkspaceMenu({ mode, setMode, workspace, workspaces, onSelect, onDelet
           {mode === "create" && (
             <label>
               工作区名称
-              <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="例如：产品架构知识库" />
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="例如：产品架构知识库"
+              />
             </label>
           )}
           <label>
             目录路径
             <div className="workspace-path-row">
-              <input value={path} onChange={(event) => setPath(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void (mode === "open" ? onOpen() : onCreate()); }} placeholder="/Users/username/Workspace/docs" autoFocus />
-              <button type="button" className="workspace-path-browse" disabled={picking || !inTauriRuntime()} title={inTauriRuntime() ? "选择目录" : "目录选择需要在桌面端运行"} onClick={() => void pickDirectory()}>
+              <input
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void (mode === "open" ? onOpen() : onCreate());
+                }}
+                placeholder="/Users/username/Workspace/docs"
+                autoFocus
+              />
+              <button
+                type="button"
+                className="workspace-path-browse"
+                disabled={picking || !inTauriRuntime()}
+                title={inTauriRuntime() ? "选择目录" : "目录选择需要在桌面端运行"}
+                onClick={() => void pickDirectory()}
+              >
                 浏览…
               </button>
             </div>
           </label>
-          <small className="workspace-help">{mode === "create" ? "将在该目录自动创建 .llm-wiki 知识库配置与索引数据库" : "目标目录需包含或初始化 .llm-wiki 知识库"}</small>
-          <button className="workspace-submit" onClick={() => void (mode === "open" ? onOpen() : onCreate())}>
+          <small className="workspace-help">
+            {mode === "create"
+              ? "将在该目录自动创建 .llm-wiki 知识库配置与索引数据库"
+              : "目标目录需包含或初始化 .llm-wiki 知识库"}
+          </small>
+          <button
+            className="workspace-submit"
+            onClick={() => void (mode === "open" ? onOpen() : onCreate())}
+          >
             {mode === "create" ? "创建并打开" : "打开工作区"}
           </button>
         </div>
@@ -1755,7 +2209,8 @@ function WorkspaceMenu({ mode, setMode, workspace, workspaces, onSelect, onDelet
 
 // --- AI chat helpers ---
 function conversationTime(isoOrTimestamp: string | number): string {
-  const ts = typeof isoOrTimestamp === "number" ? isoOrTimestamp : new Date(isoOrTimestamp).getTime();
+  const ts =
+    typeof isoOrTimestamp === "number" ? isoOrTimestamp : new Date(isoOrTimestamp).getTime();
   if (Number.isNaN(ts)) return "刚刚";
   const deltaSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
   if (deltaSec < 60) return "刚刚";
@@ -1766,7 +2221,8 @@ function conversationTime(isoOrTimestamp: string | number): string {
 }
 
 function dayBucket(isoOrTimestamp: string | number): string {
-  const ts = typeof isoOrTimestamp === "number" ? isoOrTimestamp : new Date(isoOrTimestamp).getTime();
+  const ts =
+    typeof isoOrTimestamp === "number" ? isoOrTimestamp : new Date(isoOrTimestamp).getTime();
   if (Number.isNaN(ts)) return "未知时间";
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -1849,7 +2305,11 @@ function ChatView({
   }, [availableModels]);
 
   useEffect(() => {
-    if (activeSession?.model?.id && activeSession.model.id !== "default" && activeSession.model.id !== "") {
+    if (
+      activeSession?.model?.id &&
+      activeSession.model.id !== "default" &&
+      activeSession.model.id !== ""
+    ) {
       const key = `${activeSession.model.provider}:${activeSession.model.id}`;
       const exists = availableModels.some((m) => `${m.provider}:${m.id}` === key);
       if (exists) setSelectedModelKey(key);
@@ -2007,11 +2467,27 @@ function ChatView({
         </div>
         <div className="doc-scroll">
           {visibleSessions.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)", fontSize: "12px", lineHeight: "1.6" }}>
+            <div
+              style={{
+                textAlign: "center",
+                padding: "40px 16px",
+                color: "var(--text-muted)",
+                fontSize: "12px",
+                lineHeight: "1.6",
+              }}
+            >
               {sessions.length === 0 ? (
-                <>暂无历史对话<br />提问后将自动沉淀在此</>
+                <>
+                  暂无历史对话
+                  <br />
+                  提问后将自动沉淀在此
+                </>
               ) : (
-                <>未匹配到对话<br />请尝试更换搜索词</>
+                <>
+                  未匹配到对话
+                  <br />
+                  请尝试更换搜索词
+                </>
               )}
             </div>
           ) : (
@@ -2068,9 +2544,7 @@ function ChatView({
           <div className="toolbar-spacer" />
           {activeSession && (
             <>
-              <span className="chat-meta-chip">
-                {messages.length} 条消息
-              </span>
+              <span className="chat-meta-chip">{messages.length} 条消息</span>
               <button
                 className="tool-button"
                 title={activeSession.pinned ? "取消置顶" : "置顶对话"}
@@ -2081,7 +2555,9 @@ function ChatView({
               </button>
               <button
                 className="tool-button"
-                onClick={() => void handleDeleteSession(activeSession.sessionId, activeSession.title)}
+                onClick={() =>
+                  void handleDeleteSession(activeSession.sessionId, activeSession.title)
+                }
               >
                 <Icon name="trash" size={13} />
                 <span>删除</span>
@@ -2098,7 +2574,8 @@ function ChatView({
               </div>
               <h2>向 Pi 智能体发起问答</h2>
               <p>
-                回答基于本地知识库已索引文档，由 Pi CLI 运行时流式生成，支持工具受控调用与安全草稿写入。
+                回答基于本地知识库已索引文档，由 Pi CLI
+                运行时流式生成，支持工具受控调用与安全草稿写入。
               </p>
               <div className="prompt-suggestions">
                 <button
@@ -2153,7 +2630,8 @@ function ChatView({
                   type="button"
                   className="prompt-chip"
                   onClick={() => {
-                    const prompt = "请深度阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具挖掘文档之间的逻辑依赖、实现关系和语义引用，并生成带行号证据的关系提案。";
+                    const prompt =
+                      "请深度阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具挖掘文档之间的逻辑依赖、实现关系和语义引用，并生成带行号证据的关系提案。";
                     setQuery(prompt);
                     void handleSend(prompt);
                   }}
@@ -2165,7 +2643,8 @@ function ChatView({
                   type="button"
                   className="prompt-chip"
                   onClick={() => {
-                    const prompt = "为当前知识库起草一份系统概述文档，并创建为草稿 wiki/overview.md";
+                    const prompt =
+                      "为当前知识库起草一份系统概述文档，并创建为草稿 wiki/overview.md";
                     setQuery(prompt);
                     void handleSend(prompt);
                   }}
@@ -2264,11 +2743,7 @@ function ChatView({
           <div className="composer-inner">
             <textarea
               ref={textareaRef}
-              placeholder={
-                !workspace
-                  ? "请先选择一个工作区"
-                  : "向 Pi 智能体提问，按 Enter 发送…"
-              }
+              placeholder={!workspace ? "请先选择一个工作区" : "向 Pi 智能体提问，按 Enter 发送…"}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -2281,9 +2756,13 @@ function ChatView({
             />
             <div className="composer-toolbar">
               <div className="composer-toolbar-left">
-                <span className="composer-tool">{workspace ? workspace.title : "未选择工作区"}</span>
+                <span className="composer-tool">
+                  {workspace ? workspace.title : "未选择工作区"}
+                </span>
                 <div className="model-selector-chip" title="选择 Pi 已认证模型">
-                  <span className="model-selector-spark"><Icon name="spark" size={12} /></span>
+                  <span className="model-selector-spark">
+                    <Icon name="spark" size={12} />
+                  </span>
                   <select
                     value={selectedModelKey}
                     onChange={(e) => setSelectedModelKey(e.target.value)}
@@ -2330,9 +2809,7 @@ function ChatView({
               )}
             </div>
           </div>
-          <p className="composer-note">
-            Pi 生成式问答 · Enter 发送 · Shift+Enter 换行
-          </p>
+          <p className="composer-note">Pi 生成式问答 · Enter 发送 · Shift+Enter 换行</p>
         </div>
       </section>
     </div>
@@ -2354,7 +2831,9 @@ const AssistantMessage = memo(function AssistantMessage({
   onDraftApplied?: () => void;
   onSendPrompt?: (prompt: string) => void;
 }): React.ReactElement {
-  const draftTools = (message.toolCalls ?? []).filter((t) => t.toolName === "document_draft_create");
+  const draftTools = (message.toolCalls ?? []).filter(
+    (t) => t.toolName === "document_draft_create",
+  );
   const relationProposals = useMemo(() => extractRelationProposals(message), [message]);
 
   // Check if message.text itself is a JSON representation of a draft (e.g. from historical session or raw tool output)
@@ -2442,7 +2921,10 @@ const AssistantMessage = memo(function AssistantMessage({
           <div className="msg-pi-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
           </div>
-        ) : !message.thinking && draftTools.length === 0 && !textAsDraft && relationProposals.length === 0 ? (
+        ) : !message.thinking &&
+          draftTools.length === 0 &&
+          !textAsDraft &&
+          relationProposals.length === 0 ? (
           <p className="msg-status">未返回文本输出。</p>
         ) : null}
         {message.errorMessage && (
@@ -2494,7 +2976,11 @@ function extractHeadings(markdown: string): HeadingEntry[] {
   return headings;
 }
 
-function splitFrontMatter(markdown: string): { title: string | null; subtitle: string | null; body: string } {
+function splitFrontMatter(markdown: string): {
+  title: string | null;
+  subtitle: string | null;
+  body: string;
+} {
   if (!markdown.startsWith("---")) return { title: null, subtitle: null, body: markdown };
   const end = markdown.indexOf("\n---", 3);
   if (end === -1) return { title: null, subtitle: null, body: markdown };
@@ -2569,7 +3055,8 @@ function DocumentsEmptyState({
         </div>
         <h2>未检测到已索引文档</h2>
         <p className="doc-empty-desc">
-          当前工作区扫描目录下暂无 Markdown 或文本文件。您可以配置已有文档目录快速构建索引，或直接导入外部知识文件。
+          当前工作区扫描目录下暂无 Markdown
+          或文本文件。您可以配置已有文档目录快速构建索引，或直接导入外部知识文件。
         </p>
 
         {workspace && (
@@ -2616,7 +3103,10 @@ function DocumentsEmptyState({
                 disabled={!workspace || dirSaving || indexing}
               />
             </div>
-            <button type="submit" disabled={!workspace || dirSaving || indexing || !newDirInput.trim()}>
+            <button
+              type="submit"
+              disabled={!workspace || dirSaving || indexing || !newDirInput.trim()}
+            >
               <Icon name="plus" size={13} />
               添加并扫描
             </button>
@@ -2637,7 +3127,12 @@ function DocumentsEmptyState({
                 </button>
               ))}
               {includeDirs.length > 0 && !defaultDirs.every((d) => includeDirs.includes(d)) && (
-                <button type="button" className="doc-preset-btn" onClick={onResetDirs} style={{ marginLeft: "auto" }}>
+                <button
+                  type="button"
+                  className="doc-preset-btn"
+                  onClick={onResetDirs}
+                  style={{ marginLeft: "auto" }}
+                >
                   恢复默认
                 </button>
               )}
@@ -2797,7 +3292,10 @@ function DocumentsView({
     setIndexFeedback(null);
     try {
       const stats = await invoke<IndexStats>("index_run", { root: workspace.root, reset });
-      const data = await invoke<KbFileListPage>("documents_list", { root: workspace.root, pageSize: 1000 });
+      const data = await invoke<KbFileListPage>("documents_list", {
+        root: workspace.root,
+        pageSize: 1000,
+      });
       setPage({ status: "ready", data });
       setSelectedId((prev) => {
         if (focusFileId !== null && focusFileId !== undefined) return focusFileId;
@@ -2828,7 +3326,10 @@ function DocumentsView({
     setDirSaving(true);
     setDirError(null);
     try {
-      const config = await invoke<KbConfigInfo>("kb_config_set_include", { root: workspace.root, include: next });
+      const config = await invoke<KbConfigInfo>("kb_config_set_include", {
+        root: workspace.root,
+        include: next,
+      });
       setIncludeDirs(config.include);
       if (reindexAfter) {
         await runIndex();
@@ -2877,7 +3378,10 @@ function DocumentsView({
     return (
       <div className="doc-empty-container">
         <div className="doc-empty-card">
-          <div className="doc-empty-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+          <div
+            className="doc-empty-icon"
+            style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}
+          >
             <Icon name="close" size={28} />
           </div>
           <h2>无法加载文档</h2>
@@ -3036,7 +3540,9 @@ function TreeViewNode({
           <span className="tree-icon folder">
             <Icon name="folder" size={14} />
           </span>
-          <span className="tree-name dir-name" title={node.path}>{node.name}</span>
+          <span className="tree-name dir-name" title={node.path}>
+            {node.name}
+          </span>
           <span className="tree-badge">{node.fileCount}</span>
         </div>
         {!isCollapsed && (
@@ -3074,9 +3580,7 @@ function TreeViewNode({
       </span>
       <div className="tree-file-info">
         <span className="tree-name file-name">{node.name}</span>
-        <span className="tree-file-meta">
-          {(file.size / 1024).toFixed(1)} KB
-        </span>
+        <span className="tree-file-meta">{(file.size / 1024).toFixed(1)} KB</span>
       </div>
     </div>
   );
@@ -3174,11 +3678,7 @@ function Library({
             >
               <Icon name="refresh" size={14} className={indexing ? "spin" : ""} />
             </button>
-            <button
-              className="lib-icon-btn"
-              title="导入外部文件"
-              onClick={onOpenImports}
-            >
+            <button className="lib-icon-btn" title="导入外部文件" onClick={onOpenImports}>
               <Icon name="import" size={14} />
             </button>
           </div>
@@ -3195,7 +3695,14 @@ function Library({
 
       <div className="doc-scroll">
         {filteredFiles.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "30px 14px", color: "var(--text-muted)", fontSize: "12px" }}>
+          <div
+            style={{
+              textAlign: "center",
+              padding: "30px 14px",
+              color: "var(--text-muted)",
+              fontSize: "12px",
+            }}
+          >
             无匹配文档
           </div>
         ) : viewMode === "tree" ? (
@@ -3252,10 +3759,11 @@ function ReaderShell({
   const [copied, setCopied] = useState(false);
 
   const rawMarkdown = content.status === "ready" ? content.data.content : "";
-  const { title: fmTitle, subtitle: fmSubtitle, body: cleanBody } = useMemo(
-    () => splitFrontMatter(rawMarkdown),
-    [rawMarkdown],
-  );
+  const {
+    title: fmTitle,
+    subtitle: fmSubtitle,
+    body: cleanBody,
+  } = useMemo(() => splitFrontMatter(rawMarkdown), [rawMarkdown]);
   const displayTitle = fmTitle || (file ? docName(file.path) : "未命名文档");
   const headings = useMemo(() => extractHeadings(cleanBody), [cleanBody]);
 
@@ -3274,7 +3782,9 @@ function ReaderShell({
     return (
       <section className="reader-shell empty">
         <div className="reader-empty-center">
-          <div className="hero-icon"><Icon name="file" size={26} /></div>
+          <div className="hero-icon">
+            <Icon name="file" size={26} />
+          </div>
           <h3>选择左侧文档查看详情</h3>
           <p>支持 Markdown 实时渲染与结构化大纲导航</p>
         </div>
@@ -3297,10 +3807,16 @@ function ReaderShell({
         </div>
         <div className="toolbar-spacer" />
         <div className="segmented">
-          <button className={viewMode === "render" ? "active" : ""} onClick={() => setViewMode("render")}>
+          <button
+            className={viewMode === "render" ? "active" : ""}
+            onClick={() => setViewMode("render")}
+          >
             渲染视图
           </button>
-          <button className={viewMode === "source" ? "active" : ""} onClick={() => setViewMode("source")}>
+          <button
+            className={viewMode === "source" ? "active" : ""}
+            onClick={() => setViewMode("source")}
+          >
             源码视图
           </button>
         </div>
@@ -3326,19 +3842,39 @@ function ReaderShell({
       <div className="reader-scroll">
         {content.status === "loading" ? (
           <div className="reader-empty-center" style={{ margin: "60px auto" }}>
-            <div className="hero-icon"><Icon name="refresh" size={24} className="spin" /></div>
+            <div className="hero-icon">
+              <Icon name="refresh" size={24} className="spin" />
+            </div>
             <h3>正在读取文档内容…</h3>
             <p>正在解析 Markdown 文档并提取结构化大纲</p>
           </div>
         ) : content.status === "error" ? (
           <div className="reader-empty-center" style={{ margin: "60px auto" }}>
-            <div className="hero-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}><Icon name="close" size={24} /></div>
+            <div
+              className="hero-icon"
+              style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}
+            >
+              <Icon name="close" size={24} />
+            </div>
             <h3>无法读取文档内容</h3>
             <p>{content.message}</p>
           </div>
         ) : viewMode === "source" ? (
           <div style={{ padding: "24px", maxWidth: "960px", margin: "0 auto" }}>
-            <pre style={{ margin: 0, padding: "20px", borderRadius: "12px", background: "#1e293b", color: "#e2e8f0", fontFamily: "var(--app-font-mono)", fontSize: "13px", lineHeight: "1.65", overflow: "auto", whiteSpace: "pre-wrap" }}>
+            <pre
+              style={{
+                margin: 0,
+                padding: "20px",
+                borderRadius: "12px",
+                background: "#1e293b",
+                color: "#e2e8f0",
+                fontFamily: "var(--app-font-mono)",
+                fontSize: "13px",
+                lineHeight: "1.65",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+              }}
+            >
               {rawMarkdown}
             </pre>
           </div>
@@ -3356,7 +3892,9 @@ function ReaderShell({
                   <span className="tag blue">{file.language.toUpperCase()}</span>
                   <span className="tag">{(file.size / 1024).toFixed(1)} KB</span>
                   <span className="tag">{file.chunkCount} 切片</span>
-                  <span style={{ color: "var(--text-muted)", fontSize: "11px", marginLeft: "auto" }}>
+                  <span
+                    style={{ color: "var(--text-muted)", fontSize: "11px", marginLeft: "auto" }}
+                  >
                     路径：{file.path}
                   </span>
                 </div>
@@ -3368,15 +3906,27 @@ function ReaderShell({
                   components={{
                     h1({ children, ...props }) {
                       const text = extractText(children);
-                      return <h1 id={slugify(text)} {...props}>{children}</h1>;
+                      return (
+                        <h1 id={slugify(text)} {...props}>
+                          {children}
+                        </h1>
+                      );
                     },
                     h2({ children, ...props }) {
                       const text = extractText(children);
-                      return <h2 id={slugify(text)} {...props}>{children}</h2>;
+                      return (
+                        <h2 id={slugify(text)} {...props}>
+                          {children}
+                        </h2>
+                      );
                     },
                     h3({ children, ...props }) {
                       const text = extractText(children);
-                      return <h3 id={slugify(text)} {...props}>{children}</h3>;
+                      return (
+                        <h3 id={slugify(text)} {...props}>
+                          {children}
+                        </h3>
+                      );
                     },
                   }}
                 >
@@ -3390,7 +3940,11 @@ function ReaderShell({
                 <div className="toc-title">目录导航</div>
                 <nav className="toc-list">
                   {headings.map((h, i) => (
-                    <a key={`${h.slug}-${i}`} href={`#${h.slug}`} className={h.level === 3 ? "sub" : ""}>
+                    <a
+                      key={`${h.slug}-${i}`}
+                      href={`#${h.slug}`}
+                      className={h.level === 3 ? "sub" : ""}
+                    >
                       {h.text}
                     </a>
                   ))}
@@ -3405,7 +3959,13 @@ function ReaderShell({
 }
 
 // --- Imports View (Full Desktop 2-column App Design) ---
-function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | null; onImported: () => void }): React.ReactElement {
+function ImportsView({
+  workspace,
+  onImported,
+}: {
+  workspace: WorkspaceInfo | null;
+  onImported: () => void;
+}): React.ReactElement {
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3429,7 +3989,10 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
     try {
       const picked = await openDialog({ multiple: false, directory: false });
       if (typeof picked !== "string") return;
-      const info = await invoke<AttachmentInfo>("import_file", { root: workspace.root, sourcePath: picked });
+      const info = await invoke<AttachmentInfo>("import_file", {
+        root: workspace.root,
+        sourcePath: picked,
+      });
       refresh();
       setSelected(info.name);
     } catch (reason: unknown) {
@@ -3452,7 +4015,10 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
     } catch {
       if (isExtractable) {
         try {
-          const extracted = await invoke<string>("attachment_extract", { root: workspace.root, name });
+          const extracted = await invoke<string>("attachment_extract", {
+            root: workspace.root,
+            name,
+          });
           setContent(extracted);
         } catch (reason: unknown) {
           setError(String(reason));
@@ -3486,7 +4052,9 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
     return (
       <div className="doc-empty-container">
         <div className="doc-empty-card">
-          <div className="doc-empty-icon"><Icon name="import" size={28} /></div>
+          <div className="doc-empty-icon">
+            <Icon name="import" size={28} />
+          </div>
           <h2>导入外部知识文档</h2>
           <p className="doc-empty-desc">请先在左上角选择或连接一个本地工作区。</p>
         </div>
@@ -3501,14 +4069,26 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
           <strong>已导入附件 ({attachments.length})</strong>
         </div>
         <div className="file-tree-actions">
-          <button className="primary-button" style={{ width: "100%" }} disabled={busy} onClick={() => void pickAndImport()}>
+          <button
+            className="primary-button"
+            style={{ width: "100%" }}
+            disabled={busy}
+            onClick={() => void pickAndImport()}
+          >
             <Icon name="plus" size={14} />
             {busy ? "正在导入…" : "导入外部文件"}
           </button>
         </div>
 
         {attachments.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "12px", textAlign: "center", padding: "24px 8px" }}>
+          <p
+            style={{
+              color: "var(--text-muted)",
+              fontSize: "12px",
+              textAlign: "center",
+              padding: "24px 8px",
+            }}
+          >
             暂无已导入文件。点击上方按钮选择 Markdown、PDF、Word 或文本文件开始。
           </p>
         ) : (
@@ -3522,7 +4102,8 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
               <div className="file-item-copy">
                 <div className="file-item-name">{att.name}</div>
                 <div className="file-item-meta">
-                  {(att.size / 1024).toFixed(1)} KB · {att.isText ? "纯文本" : att.isExtractable ? "自动提取" : "二进制"}
+                  {(att.size / 1024).toFixed(1)} KB ·{" "}
+                  {att.isText ? "纯文本" : att.isExtractable ? "自动提取" : "二进制"}
                 </div>
               </div>
             </button>
@@ -3534,44 +4115,89 @@ function ImportsView({ workspace, onImported }: { workspace: WorkspaceInfo | nul
         {error && <div className="doc-status-banner error">操作错误：{error}</div>}
         {selected === null ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
-            <div className="hero-icon"><Icon name="import" size={28} /></div>
-            <h2 style={{ fontSize: "18px", color: "var(--text-main)", margin: "0 0 8px" }}>选择左侧已导入文件</h2>
+            <div className="hero-icon">
+              <Icon name="import" size={28} />
+            </div>
+            <h2 style={{ fontSize: "18px", color: "var(--text-main)", margin: "0 0 8px" }}>
+              选择左侧已导入文件
+            </h2>
             <p style={{ maxWidth: "460px", margin: "0 auto", fontSize: "13px", lineHeight: "1.6" }}>
-              导入的文件将存放于 <code>attachments/</code> 目录。支持将提取的内容一键转换为草稿，安全写入知识库。
+              导入的文件将存放于 <code>attachments/</code>{" "}
+              目录。支持将提取的内容一键转换为草稿，安全写入知识库。
             </p>
           </div>
         ) : (
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}
+            >
               <span className="eyebrow-doc">{selected}</span>
             </div>
             <h2>创建草稿并写入 Wiki</h2>
             {content === null ? (
               <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>正在提取文档文本…</p>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "16px" }}>
-                <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "12.5px", fontWeight: 600 }}>
+              <div
+                style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "16px" }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                    fontSize: "12.5px",
+                    fontWeight: 600,
+                  }}
+                >
                   目标写入路径 (相对于工作区根目录)
                   <input
                     value={targetPath}
                     onChange={(e) => setTargetPath(e.target.value)}
                     placeholder="wiki/document.md"
-                    style={{ padding: "9px 12px", borderRadius: "8px", border: "1px solid var(--border-main)", fontSize: "13px" }}
+                    style={{
+                      padding: "9px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid var(--border-main)",
+                      fontSize: "13px",
+                    }}
                   />
                 </label>
                 <div>
-                  <button className="primary-button" disabled={!targetPath.trim()} onClick={() => void createDraft()}>
+                  <button
+                    className="primary-button"
+                    disabled={!targetPath.trim()}
+                    onClick={() => void createDraft()}
+                  >
                     <Icon name="draft" size={14} />
                     生成写入草稿
                   </button>
-                  <span style={{ marginLeft: "12px", color: "var(--text-muted)", fontSize: "11.5px" }}>
+                  <span
+                    style={{ marginLeft: "12px", color: "var(--text-muted)", fontSize: "11.5px" }}
+                  >
                     草稿创建后可在「写入草稿」中二次确认，保障原子写入安全。
                   </span>
                 </div>
                 <div style={{ marginTop: "16px" }}>
-                  <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 8px" }}>提取内容预览</h3>
-                  <pre style={{ margin: 0, padding: "16px", borderRadius: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", maxHeight: "420px", overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "var(--app-font-mono)", fontSize: "12.5px", lineHeight: "1.6" }}>
-                    {content.slice(0, 5000)}{content.length > 5000 ? "\n\n…（预览截断，完整内容将完整写入草稿）" : ""}
+                  <h3 style={{ fontSize: "15px", fontWeight: 700, margin: "0 0 8px" }}>
+                    提取内容预览
+                  </h3>
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: "16px",
+                      borderRadius: "10px",
+                      background: "var(--bg-surface-subtle)",
+                      border: "1px solid var(--border-subtle)",
+                      maxHeight: "420px",
+                      overflow: "auto",
+                      whiteSpace: "pre-wrap",
+                      fontFamily: "var(--app-font-mono)",
+                      fontSize: "12.5px",
+                      lineHeight: "1.6",
+                    }}
+                  >
+                    {content.slice(0, 5000)}
+                    {content.length > 5000 ? "\n\n…（预览截断，完整内容将完整写入草稿）" : ""}
                   </pre>
                 </div>
               </div>
@@ -3613,7 +4239,8 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     };
   }, [workspace, refreshKey]);
 
-  const selectedDraft = drafts.status === "ready" ? drafts.data.find((d) => d.draftId === selectedId) ?? null : null;
+  const selectedDraft =
+    drafts.status === "ready" ? (drafts.data.find((d) => d.draftId === selectedId) ?? null) : null;
 
   const refresh = (): void => {
     setActionError(null);
@@ -3696,7 +4323,10 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     return (
       <div className="doc-empty-container">
         <div className="doc-empty-card">
-          <div className="doc-empty-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+          <div
+            className="doc-empty-icon"
+            style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}
+          >
             <Icon name="close" size={28} />
           </div>
           <h2>无法加载草稿</h2>
@@ -3713,7 +4343,9 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     return (
       <div className="doc-empty-container">
         <div className="doc-empty-card">
-          <div className="doc-empty-icon"><Icon name="draft" size={28} /></div>
+          <div className="doc-empty-icon">
+            <Icon name="draft" size={28} />
+          </div>
           <h2>暂无待确认草稿</h2>
           <p className="doc-empty-desc">
             由 Pi 智能体生成或由导入文件创建的写入草稿会在此处列出，供您人工确认后原子写入 Wiki。
@@ -3727,7 +4359,9 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
     <div className="split-panel">
       <div className="file-tree">
         <div className="file-tree-header">
-          <strong>写入草稿 ({pending.length} 待确认 / {list.length} 总数)</strong>
+          <strong>
+            写入草稿 ({pending.length} 待确认 / {list.length} 总数)
+          </strong>
         </div>
         {list.map((draft) => (
           <div
@@ -3750,8 +4384,15 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
             <div className="file-item-copy">
               <div className="file-item-name">{draft.targetPath}</div>
               <div className="file-item-meta">
-                <span className={`draft-badge ${draft.status}`}>{draft.status === "pending" ? "待审核" : draft.status === "applied" ? "已写入" : "已拒绝"}</span>
-                {" · "}{OPERATION_LABELS[draft.operationType] ?? draft.operationType}
+                <span className={`draft-badge ${draft.status}`}>
+                  {draft.status === "pending"
+                    ? "待审核"
+                    : draft.status === "applied"
+                      ? "已写入"
+                      : "已拒绝"}
+                </span>
+                {" · "}
+                {OPERATION_LABELS[draft.operationType] ?? draft.operationType}
               </div>
             </div>
             <button
@@ -3773,32 +4414,52 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
         {actionError && <div className="doc-status-banner error">操作失败：{actionError}</div>}
         {selectedDraft === null ? (
           <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-muted)" }}>
-            <div className="hero-icon"><Icon name="draft" size={28} /></div>
-            <h2 style={{ fontSize: "18px", color: "var(--text-main)", margin: "0 0 8px" }}>选择左侧草稿进行审查</h2>
+            <div className="hero-icon">
+              <Icon name="draft" size={28} />
+            </div>
+            <h2 style={{ fontSize: "18px", color: "var(--text-main)", margin: "0 0 8px" }}>
+              选择左侧草稿进行审查
+            </h2>
             <p style={{ fontSize: "13px" }}>当前有 {pending.length} 个待确认写入草稿。</p>
           </div>
         ) : (
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
-              <span className="eyebrow-doc">{OPERATION_LABELS[selectedDraft.operationType] ?? selectedDraft.operationType}</span>
+            <div
+              style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}
+            >
+              <span className="eyebrow-doc">
+                {OPERATION_LABELS[selectedDraft.operationType] ?? selectedDraft.operationType}
+              </span>
               <span className={`draft-badge ${selectedDraft.status}`}>
-                {selectedDraft.status === "pending" ? "待审核" : selectedDraft.status === "applied" ? "已生效" : "已拒绝"}
+                {selectedDraft.status === "pending"
+                  ? "待审核"
+                  : selectedDraft.status === "applied"
+                    ? "已生效"
+                    : "已拒绝"}
               </span>
             </div>
             <h2>{selectedDraft.targetPath}</h2>
             <p style={{ color: "var(--text-muted)", fontSize: "12.5px", margin: "0 0 18px" }}>
               创建者：{selectedDraft.createdBy}
-              {selectedDraft.baseDocumentHash && ` · 基准哈希：${selectedDraft.baseDocumentHash.slice(0, 10)}…`}
-              {selectedDraft.sourceCitations.length > 0 && ` · 引用 ${selectedDraft.sourceCitations.length} 处知识来源`}
+              {selectedDraft.baseDocumentHash &&
+                ` · 基准哈希：${selectedDraft.baseDocumentHash.slice(0, 10)}…`}
+              {selectedDraft.sourceCitations.length > 0 &&
+                ` · 引用 ${selectedDraft.sourceCitations.length} 处知识来源`}
             </p>
 
             {selectedDraft.status === "pending" ? (
               <div style={{ display: "flex", gap: "10px", margin: "16px 0" }}>
-                <button className="primary-button" onClick={() => void applyDraft(selectedDraft.draftId)}>
+                <button
+                  className="primary-button"
+                  onClick={() => void applyDraft(selectedDraft.draftId)}
+                >
                   <Icon name="check" size={14} />
                   确认写入知识库
                 </button>
-                <button className="tool-button" onClick={() => void rejectDraft(selectedDraft.draftId)}>
+                <button
+                  className="tool-button"
+                  onClick={() => void rejectDraft(selectedDraft.draftId)}
+                >
                   <Icon name="close" size={14} />
                   拒绝草稿
                 </button>
@@ -3813,8 +4474,28 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
                 </button>
               </div>
             ) : (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderRadius: "8px", background: "var(--bg-surface-muted)", color: "var(--text-secondary)", fontSize: "12.5px", margin: "14px 0" }}>
-                <span>该草稿已完成处理 ({selectedDraft.status === "applied" ? "已生效" : selectedDraft.status === "rejected" ? "已拒绝" : selectedDraft.status})。</span>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  background: "var(--bg-surface-muted)",
+                  color: "var(--text-secondary)",
+                  fontSize: "12.5px",
+                  margin: "14px 0",
+                }}
+              >
+                <span>
+                  该草稿已完成处理 (
+                  {selectedDraft.status === "applied"
+                    ? "已生效"
+                    : selectedDraft.status === "rejected"
+                      ? "已拒绝"
+                      : selectedDraft.status}
+                  )。
+                </span>
                 <button
                   className="tool-button small"
                   style={{ color: "var(--danger)" }}
@@ -3828,9 +4509,24 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
             )}
 
             <div style={{ marginTop: "20px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "10px",
+                }}
+              >
                 <h3 style={{ fontSize: "15px", fontWeight: 700, margin: 0 }}>生成内容预览</h3>
-                <div style={{ display: "inline-flex", background: "var(--bg-surface-subtle)", padding: "2px", borderRadius: "8px", border: "1px solid var(--border-subtle)" }}>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    background: "var(--bg-surface-subtle)",
+                    padding: "2px",
+                    borderRadius: "8px",
+                    border: "1px solid var(--border-subtle)",
+                  }}
+                >
                   <button
                     type="button"
                     onClick={() => setPreviewMode("preview")}
@@ -3893,7 +4589,21 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
                   </ReactMarkdown>
                 </div>
               ) : (
-                <pre style={{ margin: 0, padding: "16px", borderRadius: "10px", background: "var(--bg-surface-subtle)", border: "1px solid var(--border-subtle)", maxHeight: "520px", overflow: "auto", whiteSpace: "pre-wrap", fontFamily: "var(--app-font-mono)", fontSize: "12.5px", lineHeight: "1.6" }}>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: "16px",
+                    borderRadius: "10px",
+                    background: "var(--bg-surface-subtle)",
+                    border: "1px solid var(--border-subtle)",
+                    maxHeight: "520px",
+                    overflow: "auto",
+                    whiteSpace: "pre-wrap",
+                    fontFamily: "var(--app-font-mono)",
+                    fontSize: "12.5px",
+                    lineHeight: "1.6",
+                  }}
+                >
                   {selectedDraft.generatedContent}
                 </pre>
               )}
@@ -3906,7 +4616,13 @@ function DraftsView({ workspace }: { workspace: WorkspaceInfo | null }): React.R
 }
 
 // --- Tasks View (Full Desktop System Monitor) ---
-function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; onIndexed: () => void }): React.ReactElement {
+function TasksView({
+  workspace,
+  onIndexed,
+}: {
+  workspace: WorkspaceInfo | null;
+  onIndexed: () => void;
+}): React.ReactElement {
   const [indexing, setIndexing] = useState(false);
   const [lastResult, setLastResult] = useState<IndexStats | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3955,7 +4671,11 @@ function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; 
         </div>
         <p>扫描配置目录下的 Markdown 与文本文件，解析层级章节并维护 BM25 全文检索索引与切片。</p>
 
-        {error && <div className="doc-status-banner error" style={{ marginTop: "12px" }}>索引错误：{error}</div>}
+        {error && (
+          <div className="doc-status-banner error" style={{ marginTop: "12px" }}>
+            索引错误：{error}
+          </div>
+        )}
 
         <div className="task-stats-grid">
           <div className="task-stat-item">
@@ -3977,8 +4697,18 @@ function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; 
         </div>
 
         {lastResult && (
-          <div style={{ marginTop: "14px", padding: "10px 14px", borderRadius: "8px", background: "var(--bg-surface-subtle)", fontSize: "12px", color: "var(--text-secondary)" }}>
-            上次扫描结果：扫描 {lastResult.scanned} 篇 · 新增 {lastResult.added} 篇 · 更新 {lastResult.updated} 篇 · 跳过 {lastResult.skipped} 篇 · 切片 {lastResult.chunks} 个
+          <div
+            style={{
+              marginTop: "14px",
+              padding: "10px 14px",
+              borderRadius: "8px",
+              background: "var(--bg-surface-subtle)",
+              fontSize: "12px",
+              color: "var(--text-secondary)",
+            }}
+          >
+            上次扫描结果：扫描 {lastResult.scanned} 篇 · 新增 {lastResult.added} 篇 · 更新{" "}
+            {lastResult.updated} 篇 · 跳过 {lastResult.skipped} 篇 · 切片 {lastResult.chunks} 个
           </div>
         )}
       </div>
@@ -3988,7 +4718,10 @@ function TasksView({ workspace, onIndexed }: { workspace: WorkspaceInfo | null; 
           <strong>存储引擎与并发安全性 (SQLite WAL)</strong>
           <span className="draft-badge applied">正常运行</span>
         </div>
-        <p>采用 SQLite WAL (Write-Ahead Logging) 模式，保障桌面端多任务、AI 问答并发检索及文件写入事务的一致性。</p>
+        <p>
+          采用 SQLite WAL (Write-Ahead Logging) 模式，保障桌面端多任务、AI
+          问答并发检索及文件写入事务的一致性。
+        </p>
         <div className="task-stats-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <div className="task-stat-item">
             <span>模式</span>

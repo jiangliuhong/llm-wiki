@@ -90,15 +90,15 @@
 
 ## 7. 推荐执行顺序
 
-| 阶段 | 交付目标 | 完成标准 |
-| --- | --- | --- |
-| P0 | Core SQLite 读路径 | Desktop 能读取真实文档、搜索结果和 graph |
-| P1 | Rust scanner/indexer | Rust 与 TypeScript fixtures parity，支持增量索引 |
-| P2 | Desktop 真实页面 | 文档、graph、任务和状态页不再依赖静态示例数据 |
-| P3 | Pi Runtime | 能流式问答，工具权限和会话生命周期完整 |
-| P4 | 导入/草稿写入 | Diff、确认、原子写入、增量索引和审计完整 |
-| P5 | CLI/MCP 完整能力 | CLI 与外部 Agent 复用同一 Core 和错误协议 |
-| P6 | 打包发布 | macOS 安装包可独立运行，CLI 可独立安装 |
+| 阶段 | 交付目标             | 完成标准                                         |
+| ---- | -------------------- | ------------------------------------------------ |
+| P0   | Core SQLite 读路径   | Desktop 能读取真实文档、搜索结果和 graph         |
+| P1   | Rust scanner/indexer | Rust 与 TypeScript fixtures parity，支持增量索引 |
+| P2   | Desktop 真实页面     | 文档、graph、任务和状态页不再依赖静态示例数据    |
+| P3   | Pi Runtime           | 能流式问答，工具权限和会话生命周期完整           |
+| P4   | 导入/草稿写入        | Diff、确认、原子写入、增量索引和审计完整         |
+| P5   | CLI/MCP 完整能力     | CLI 与外部 Agent 复用同一 Core 和错误协议        |
+| P6   | 打包发布             | macOS 安装包可独立运行，CLI 可独立安装           |
 
 ## 8. 每阶段验收要求
 

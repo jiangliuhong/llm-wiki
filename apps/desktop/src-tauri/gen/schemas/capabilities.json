@@ -1,1 +1,9 @@
-{"default":{"identifier":"default","description":"Minimal desktop capability: core window/event APIs only.","local":true,"windows":["main"],"permissions":["core:default","dialog:default"]}}
+{
+  "default": {
+    "identifier": "default",
+    "description": "Minimal desktop capability: core window/event APIs only.",
+    "local": true,
+    "windows": ["main"],
+    "permissions": ["core:default", "dialog:default"]
+  }
+}

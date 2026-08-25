@@ -35,7 +35,10 @@ export function makeIndexCommand(): Command {
     .description("Index workspace content into the local knowledge base (.llm-wiki/index.db)")
     .option("--reset", "Wipe the existing index before re-indexing everything", false)
     .option("--json", "Output a machine-readable result object", false)
-    .option("--source-revision <sha>", "Record this revision (e.g. merged commit sha) in index metadata")
+    .option(
+      "--source-revision <sha>",
+      "Record this revision (e.g. merged commit sha) in index metadata",
+    )
     .option("--source-branch <name>", "Record this source branch label in index metadata")
     .option("--output-db <path>", "Build into this DB file instead of the active index")
     .option("--seed-db <path>", "Copy this previous DB before indexing (incremental rebuild)")
@@ -70,10 +73,7 @@ async function runIndex(options: IndexOptions, command: Command): Promise<void> 
     config = loadConfigFromPath(ctx.configPath);
   } catch (err) {
     if (err instanceof ConfigError) {
-      emitError(
-        new CliError(`CONFIG_${err.code}`, err.message, ExitCode.CONFIG),
-        { json },
-      );
+      emitError(new CliError(`CONFIG_${err.code}`, err.message, ExitCode.CONFIG), { json });
       return;
     }
     throw err;
@@ -114,11 +114,7 @@ async function runIndex(options: IndexOptions, command: Command): Promise<void> 
     });
   } catch (err) {
     emitError(
-      new CliError(
-        "DB_INDEX_FAILED",
-        `Indexing failed: ${(err as Error).message}`,
-        ExitCode.DB,
-      ),
+      new CliError("DB_INDEX_FAILED", `Indexing failed: ${(err as Error).message}`, ExitCode.DB),
       { json },
     );
     return;

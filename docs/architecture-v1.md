@@ -64,20 +64,20 @@ llm-wiki mcp serve --stdio --workspace <workspace> --read-only
 
 ## 4. 技术决策
 
-| 领域 | V1 选型 | 决策说明 |
-| --- | --- | --- |
-| 桌面壳 | Tauri 2 | 窗口、系统能力、权限、Pi Sidecar 生命周期和安装包 |
-| 桌面前端 | React 19 + Vite | 采用 SPA，不继续依赖 Next.js Server/API Routes |
-| 基础 UI | HeroUI v3 | 表单、按钮、弹窗、菜单、表格等通用组件 |
-| 样式 | Tailwind CSS v4 | 紧凑型桌面主题和布局系统 |
-| 桌面专用 UI | 自建 `desktop-ui` 层 | 文件树、分栏、右键、命令面板、标签页和 Diff |
-| 内置 AI | Pi SDK Runtime | 模型、认证、会话、Agent 编排、流式问答和总结 |
-| 共享核心 | Rust（目标架构） | 供 Tauri、CLI 和 MCP 模式复用 |
-| 本地存储 | SQLite + WAL + FTS5 | 全局工作空间注册表和每个工作空间独立数据库 |
-| 向量检索 | 可选适配层 | 打包验证通过后启用，始终支持 FTS-only 降级 |
-| CLI | Rust CLI + npm 包装 | 唯一命令为 `llm-wiki` |
-| MCP | CLI 子命令 + Rust library crate | `llm-wiki mcp serve --stdio`，不发布独立二进制 |
-| 发布 | Tauri 安装包 + `@llm-wiki/cli` + GitHub Release | Desktop 与 CLI 可独立安装 |
+| 领域        | V1 选型                                         | 决策说明                                          |
+| ----------- | ----------------------------------------------- | ------------------------------------------------- |
+| 桌面壳      | Tauri 2                                         | 窗口、系统能力、权限、Pi Sidecar 生命周期和安装包 |
+| 桌面前端    | React 19 + Vite                                 | 采用 SPA，不继续依赖 Next.js Server/API Routes    |
+| 基础 UI     | HeroUI v3                                       | 表单、按钮、弹窗、菜单、表格等通用组件            |
+| 样式        | Tailwind CSS v4                                 | 紧凑型桌面主题和布局系统                          |
+| 桌面专用 UI | 自建 `desktop-ui` 层                            | 文件树、分栏、右键、命令面板、标签页和 Diff       |
+| 内置 AI     | Pi SDK Runtime                                  | 模型、认证、会话、Agent 编排、流式问答和总结      |
+| 共享核心    | Rust（目标架构）                                | 供 Tauri、CLI 和 MCP 模式复用                     |
+| 本地存储    | SQLite + WAL + FTS5                             | 全局工作空间注册表和每个工作空间独立数据库        |
+| 向量检索    | 可选适配层                                      | 打包验证通过后启用，始终支持 FTS-only 降级        |
+| CLI         | Rust CLI + npm 包装                             | 唯一命令为 `llm-wiki`                             |
+| MCP         | CLI 子命令 + Rust library crate                 | `llm-wiki mcp serve --stdio`，不发布独立二进制    |
+| 发布        | Tauri 安装包 + `@llm-wiki/cli` + GitHub Release | Desktop 与 CLI 可独立安装                         |
 
 ## 5. 产品交付形态
 
@@ -198,10 +198,10 @@ Core 不负责：
 
 ### 8.1 工作空间类型
 
-| 类型 | 含义 |
-| --- | --- |
-| Managed Workspace | 由 LLM Wiki 创建和管理的新目录 |
-| Linked Workspace | 将已有项目或文档目录注册为工作空间 |
+| 类型              | 含义                               |
+| ----------------- | ---------------------------------- |
+| Managed Workspace | 由 LLM Wiki 创建和管理的新目录     |
+| Linked Workspace  | 将已有项目或文档目录注册为工作空间 |
 
 每个内容根目录必须标明访问模式：
 
@@ -311,27 +311,27 @@ llm-wiki draft apply draft-123 \
 
 建议包含：
 
-| 表 | 作用 |
-| --- | --- |
-| `documents` | 文档路径、哈希、类型、状态和元数据 |
-| `chunks` | 文档切片和引用位置 |
-| `chunks_fts` | FTS5 索引 |
-| `chunk_embeddings` | 可选向量数据和模型版本 |
-| `relation_types` | 关系类型定义和方向语义 |
-| `document_relations` | 已发布的文档关系边 |
-| `relation_evidence` | 文档链接、frontmatter 或 Agent 证据 |
-| `relation_proposals` | 待审核的 Agent 关系候选 |
-| `unresolved_relation_refs` | 无效或多义关系引用诊断 |
-| `tags` / `document_tags` | 文档标签及标签关联 |
-| `assets` | 导入原文件 |
-| `ingestion_jobs` | 文件导入任务 |
-| `index_jobs` | 索引任务和错误 |
-| `chats` / `messages` | Desktop 和 CLI 问答会话 |
-| `message_citations` | 回答引用 |
-| `drafts` | 待确认草稿 |
-| `write_operations` | 文件写入及 Diff |
-| `audit_logs` | Desktop、CLI、MCP 操作记录 |
-| `schema_migrations` | 数据库版本迁移 |
+| 表                         | 作用                                |
+| -------------------------- | ----------------------------------- |
+| `documents`                | 文档路径、哈希、类型、状态和元数据  |
+| `chunks`                   | 文档切片和引用位置                  |
+| `chunks_fts`               | FTS5 索引                           |
+| `chunk_embeddings`         | 可选向量数据和模型版本              |
+| `relation_types`           | 关系类型定义和方向语义              |
+| `document_relations`       | 已发布的文档关系边                  |
+| `relation_evidence`        | 文档链接、frontmatter 或 Agent 证据 |
+| `relation_proposals`       | 待审核的 Agent 关系候选             |
+| `unresolved_relation_refs` | 无效或多义关系引用诊断              |
+| `tags` / `document_tags`   | 文档标签及标签关联                  |
+| `assets`                   | 导入原文件                          |
+| `ingestion_jobs`           | 文件导入任务                        |
+| `index_jobs`               | 索引任务和错误                      |
+| `chats` / `messages`       | Desktop 和 CLI 问答会话             |
+| `message_citations`        | 回答引用                            |
+| `drafts`                   | 待确认草稿                          |
+| `write_operations`         | 文件写入及 Diff                     |
+| `audit_logs`               | Desktop、CLI、MCP 操作记录          |
+| `schema_migrations`        | 数据库版本迁移                      |
 
 ### 8.6 并发与一致性
 
@@ -606,14 +606,14 @@ VirtualList
 
 可选辅助库：
 
-| 能力 | 候选方案 |
-| --- | --- |
-| 分栏 | `react-resizable-panels` |
-| 虚拟滚动 | `@tanstack/react-virtual` |
-| 拖放 | `dnd-kit` |
-| Markdown 编辑 | CodeMirror 6 |
-| 命令面板 | `cmdk` 或自建 Command Registry |
-| Diff | CodeMirror Merge 或 Monaco Diff |
+| 能力          | 候选方案                        |
+| ------------- | ------------------------------- |
+| 分栏          | `react-resizable-panels`        |
+| 虚拟滚动      | `@tanstack/react-virtual`       |
+| 拖放          | `dnd-kit`                       |
+| Markdown 编辑 | CodeMirror 6                    |
+| 命令面板      | `cmdk` 或自建 Command Registry  |
+| Diff          | CodeMirror Merge 或 Monaco Diff |
 
 桌面默认采用紧凑视觉密度，避免大面积 SaaS 卡片、过大圆角和过度留白。
 
@@ -774,14 +774,7 @@ MCP 直接调用 Knowledge Core，不调用 Pi。
   "mcpServers": {
     "llm-wiki": {
       "command": "llm-wiki",
-      "args": [
-        "mcp",
-        "serve",
-        "--stdio",
-        "--workspace",
-        "pl-wiki",
-        "--read-only"
-      ]
+      "args": ["mcp", "serve", "--stdio", "--workspace", "pl-wiki", "--read-only"]
     }
   }
 }
@@ -1035,19 +1028,19 @@ stdout 必须保持纯 MCP 协议输出，日志写入 stderr。
 
 ## 20. 主要风险与控制
 
-| 风险 | 控制方式 |
-| --- | --- |
-| Rust Core 迁移范围过大 | fixture 对照、分模块迁移、保留短期 TS 适配器 |
-| Pi 获得过高本地权限 | 禁用内置高风险工具，只暴露 Host Tools |
-| CLI 与 Desktop 行为漂移 | 共享 Core、共享 schema、共享协议测试 |
-| npm 平台二进制发布复杂 | 主包 + optionalDependencies + 平台安装测试 |
-| Pi Runtime 在 npm 包内定位失败 | wrapper 注入固定环境变量并由 doctor 验证 |
-| MCP 访问错误工作空间 | 启动时强制显式 workspace scope |
-| SQLite/向量扩展打包失败 | FTS-only 永远可用，向量作为可选能力 |
-| 中文搜索效果差 | trigram/中文分词、精确匹配、真实 Embedding、RRF |
-| 并发写冲突 | WAL、单写队列、文件锁、expectedHash、原子写入 |
-| HeroUI 页面仍像 Web SaaS | desktop-ui 层、紧凑主题、键盘和右键交互 |
-| 外部文档包含 Prompt Injection | 文档视为数据、系统提示隔离、工具权限由 Core 判断 |
+| 风险                           | 控制方式                                         |
+| ------------------------------ | ------------------------------------------------ |
+| Rust Core 迁移范围过大         | fixture 对照、分模块迁移、保留短期 TS 适配器     |
+| Pi 获得过高本地权限            | 禁用内置高风险工具，只暴露 Host Tools            |
+| CLI 与 Desktop 行为漂移        | 共享 Core、共享 schema、共享协议测试             |
+| npm 平台二进制发布复杂         | 主包 + optionalDependencies + 平台安装测试       |
+| Pi Runtime 在 npm 包内定位失败 | wrapper 注入固定环境变量并由 doctor 验证         |
+| MCP 访问错误工作空间           | 启动时强制显式 workspace scope                   |
+| SQLite/向量扩展打包失败        | FTS-only 永远可用，向量作为可选能力              |
+| 中文搜索效果差                 | trigram/中文分词、精确匹配、真实 Embedding、RRF  |
+| 并发写冲突                     | WAL、单写队列、文件锁、expectedHash、原子写入    |
+| HeroUI 页面仍像 Web SaaS       | desktop-ui 层、紧凑主题、键盘和右键交互          |
+| 外部文档包含 Prompt Injection  | 文档视为数据、系统提示隔离、工具权限由 Core 判断 |
 
 ## 21. 相关文档
 

@@ -107,15 +107,13 @@ export function scanFilesDetailed(options: ScanOptions): ScanResult {
 
   for (const root of options.include) {
     const absRoot = nodePath.resolve(options.projectRoot, root);
-    let isDirectory = false;
     try {
-      isDirectory = nodeFs.statSync(absRoot).isDirectory();
+      if (!nodeFs.statSync(absRoot).isDirectory()) {
+        unavailableRoots.push(root);
+        continue;
+      }
     } catch {
       // Missing and inaccessible roots are both unsafe for stale cleanup.
-      unavailableRoots.push(root);
-      continue;
-    }
-    if (!isDirectory) {
       unavailableRoots.push(root);
       continue;
     }

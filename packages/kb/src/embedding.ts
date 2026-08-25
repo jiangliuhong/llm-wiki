@@ -43,7 +43,7 @@ export function generateEmbedding(text: string, dimensions: number): Float32Arra
     const hash = createHash("sha256").update(`${i}:${text}`, "utf8").digest();
     // Map a uint32 in [0, 2^32) to [-1, 1].
     const u = digestToUint32(hash, 0);
-    vec[i] = (u / 0x80000000) - 1; // 0x80000000 = 2^31
+    vec[i] = u / 0x80000000 - 1; // 0x80000000 = 2^31
   }
 
   // L2-normalize so cosine similarity is well-defined.

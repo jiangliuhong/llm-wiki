@@ -302,16 +302,16 @@ Registry 必须：
 
 ## 8. 数据所有权
 
-| 数据 | 所有者 | 存储位置 |
-|---|---|---|
-| 用户消息、助手消息、thinking、tool call | Pi Runtime | Pi JSONL session |
-| Pi 上下文、分支、compact 信息 | Pi Runtime | Pi JSONL session |
-| workspaceId 与 sessionId 映射 | LLM Wiki | SQLite |
-| 对话标题、归档、收藏、排序 | LLM Wiki | SQLite |
-| 文档引用和回答引用 | LLM Wiki | SQLite 或消息关联表 |
-| 输入草稿和纯 UI 状态 | React | localStorage |
-| Provider、模型 ID、thinking 默认值 | LLM Wiki | `.llm-wiki/config.json` 或全局设置 |
-| API Key / OAuth 凭据 | Rust Host | 系统 Keychain |
+| 数据                                    | 所有者     | 存储位置                           |
+| --------------------------------------- | ---------- | ---------------------------------- |
+| 用户消息、助手消息、thinking、tool call | Pi Runtime | Pi JSONL session                   |
+| Pi 上下文、分支、compact 信息           | Pi Runtime | Pi JSONL session                   |
+| workspaceId 与 sessionId 映射           | LLM Wiki   | SQLite                             |
+| 对话标题、归档、收藏、排序              | LLM Wiki   | SQLite                             |
+| 文档引用和回答引用                      | LLM Wiki   | SQLite 或消息关联表                |
+| 输入草稿和纯 UI 状态                    | React      | localStorage                       |
+| Provider、模型 ID、thinking 默认值      | LLM Wiki   | `.llm-wiki/config.json` 或全局设置 |
+| API Key / OAuth 凭据                    | Rust Host  | 系统 Keychain                      |
 
 完整对话不再序列化到 localStorage。UI 打开会话时，从 Runtime 获取 Pi session snapshot，再订阅增量事件。
 

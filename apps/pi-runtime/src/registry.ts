@@ -80,7 +80,8 @@ export function getPiGlobalDefaultModel(): ModelConfig {
   return {
     provider: settings.defaultProvider || "anthropic",
     id: settings.defaultModel || "claude-sonnet-4-5",
-    thinkingLevel: (settings.defaultThinkingLevel as "off" | "minimal" | "low" | "medium" | "high") || "medium",
+    thinkingLevel:
+      (settings.defaultThinkingLevel as "off" | "minimal" | "low" | "medium" | "high") || "medium",
   };
 }
 
@@ -102,22 +103,24 @@ export async function listAvailablePiModels(): Promise<AvailableModelItem[]> {
     const defaultProvider = settings.defaultProvider;
     const defaultModel = settings.defaultModel;
 
-    return avail.map((m: {
-      provider: string;
-      id: string;
-      name?: string;
-      reasoning?: boolean;
-      contextWindow?: number;
-      maxTokens?: number;
-    }) => ({
-      provider: m.provider,
-      id: m.id,
-      name: m.name || m.id,
-      reasoning: Boolean(m.reasoning),
-      isDefault: m.provider === defaultProvider && m.id === defaultModel,
-      contextWindow: m.contextWindow,
-      maxTokens: m.maxTokens,
-    }));
+    return avail.map(
+      (m: {
+        provider: string;
+        id: string;
+        name?: string;
+        reasoning?: boolean;
+        contextWindow?: number;
+        maxTokens?: number;
+      }) => ({
+        provider: m.provider,
+        id: m.id,
+        name: m.name || m.id,
+        reasoning: Boolean(m.reasoning),
+        isDefault: m.provider === defaultProvider && m.id === defaultModel,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+      }),
+    );
   } catch (err) {
     console.error("[pi-runtime] failed to list available models:", err);
     return [];
@@ -138,7 +141,9 @@ export function hasCredential(model: ModelConfig): boolean {
 
 const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
-function normalizeThinkingLevel(level: string | undefined): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
+function normalizeThinkingLevel(
+  level: string | undefined,
+): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" {
   return level && THINKING_LEVELS.has(level)
     ? (level as "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")
     : "medium";
@@ -175,7 +180,10 @@ export class SessionRegistry {
 
   private readMetaIndex(workspaceRoot: string): Record<string, PersistedMeta> {
     try {
-      return JSON.parse(readFileSync(this.metaFile(workspaceRoot), "utf8")) as Record<string, PersistedMeta>;
+      return JSON.parse(readFileSync(this.metaFile(workspaceRoot), "utf8")) as Record<
+        string,
+        PersistedMeta
+      >;
     } catch {
       return {};
     }
@@ -223,9 +231,7 @@ export class SessionRegistry {
 
   private attachEvents(wrapper: AgentSessionWrapper): void {
     wrapper.subscribe((event) => {
-      this.onEventEnvelope(
-        createEventEnvelope(wrapper.sessionId, wrapper.workspaceId, event),
-      );
+      this.onEventEnvelope(createEventEnvelope(wrapper.sessionId, wrapper.workspaceId, event));
     });
   }
 
@@ -272,7 +278,10 @@ export class SessionRegistry {
 
     const summary = wrapper.getSummary(true);
     this.onEventEnvelope(
-      createEventEnvelope(sessionId, wrapper.workspaceId, { type: "session_created", session: summary }),
+      createEventEnvelope(sessionId, wrapper.workspaceId, {
+        type: "session_created",
+        session: summary,
+      }),
     );
 
     return summary;
@@ -397,7 +406,8 @@ export class SessionRegistry {
       modelRuntime.getModel(model.provider, model.id) ??
       (getModel(model.provider as never, model.id) as Model<any> | undefined);
 
-    let sdkModel = matchedModel && model.baseUrl ? { ...matchedModel, baseUrl: model.baseUrl } : matchedModel;
+    let sdkModel =
+      matchedModel && model.baseUrl ? { ...matchedModel, baseUrl: model.baseUrl } : matchedModel;
     if (!sdkModel && model.baseUrl) {
       const template: Model<any> | undefined =
         modelRuntime.getModel(model.provider, "claude-sonnet-4-5") ??
@@ -419,7 +429,7 @@ export class SessionRegistry {
       );
     }
 
-const DEFAULT_SYSTEM_PROMPT = `You are the LLM Wiki Assistant, an intelligent assistant embedded in the LLM Wiki desktop application.
+    const DEFAULT_SYSTEM_PROMPT = `You are the LLM Wiki Assistant, an intelligent assistant embedded in the LLM Wiki desktop application.
 Your role is to help the user explore, understand, organize, and maintain their local Markdown knowledge base.
 
 You have access to tools to interact with the workspace knowledge base:
@@ -520,7 +530,10 @@ You have access to tools to interact with the workspace knowledge base:
 
     const summary = forked.getSummary(true);
     this.onEventEnvelope(
-      createEventEnvelope(forkedId, forked.workspaceId, { type: "session_created", session: summary }),
+      createEventEnvelope(forkedId, forked.workspaceId, {
+        type: "session_created",
+        session: summary,
+      }),
     );
     return summary;
   }

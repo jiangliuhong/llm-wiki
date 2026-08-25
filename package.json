@@ -10,6 +10,8 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "dev": "pnpm --filter @llm-wiki/web dev",
+    "desktop:dev": "pnpm --filter @llm-wiki/desktop tauri dev",
+    "desktop:build": "pnpm --filter @llm-wiki/desktop tauri build",
     "build": "pnpm -r run build",
     "lint": "pnpm -r run lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",

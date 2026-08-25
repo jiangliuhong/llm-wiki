@@ -74,7 +74,13 @@ export type AgentEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+  | {
+      type: "tool_execution_end";
+      toolCallId: string;
+      toolName: string;
+      result: unknown;
+      isError: boolean;
+    }
   | { type: "agent_end"; text?: string; stopReason?: string }
   | { type: "agent_error"; code: string; message: string; retryable: boolean }
   | { type: "session_deleted"; sessionId: string };
@@ -102,7 +108,12 @@ export interface AgentClient {
   createSession(input: CreateSessionInput): Promise<SessionInfo>;
   listSessions(workspaceRoot: string): Promise<SessionInfo[]>;
   getSession(workspaceRoot: string, sessionId: string): Promise<SessionSnapshot>;
-  prompt(workspaceRoot: string, sessionId: string, text: string, model?: ModelConfig): Promise<RunOutcome>;
+  prompt(
+    workspaceRoot: string,
+    sessionId: string,
+    text: string,
+    model?: ModelConfig,
+  ): Promise<RunOutcome>;
   cancel(sessionId: string): Promise<void>;
   compact(workspaceRoot: string, sessionId: string): Promise<void>;
   fork(workspaceRoot: string, sessionId: string, title?: string): Promise<SessionInfo>;
@@ -117,7 +128,10 @@ export interface AgentClient {
 }
 
 export function inTauriRuntime(): boolean {
-  return typeof window !== "undefined" && Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+  return (
+    typeof window !== "undefined" &&
+    Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__)
+  );
 }
 
 export class TauriAgentClient implements AgentClient {
@@ -131,7 +145,9 @@ export class TauriAgentClient implements AgentClient {
   private initEventListener(): void {
     if (!inTauriRuntime()) return;
 
-    void listen<AgentEventEnvelope | { event?: AgentEvent; sessionId?: string; workspaceId?: string }>("agent-event", (event) => {
+    void listen<
+      AgentEventEnvelope | { event?: AgentEvent; sessionId?: string; workspaceId?: string }
+    >("agent-event", (event) => {
       const payload = event.payload;
       if (!payload || !payload.event) return;
 
@@ -247,9 +263,9 @@ export class TauriAgentClient implements AgentClient {
   }
 
   async listAvailableModels(): Promise<AvailableModelItem[]> {
-    const res = await invoke<{ ok?: boolean; output?: AvailableModelItem[] } & Record<string, unknown>>(
-      "pi_models_list",
-    );
+    const res = await invoke<
+      { ok?: boolean; output?: AvailableModelItem[] } & Record<string, unknown>
+    >("pi_models_list");
     return res.output ?? [];
   }
 
@@ -387,7 +403,11 @@ export class MockAgentClient implements AgentClient {
       { provider: "openai-codex", id: "gpt-5.4", name: "GPT-5.4" },
     ];
   }
-  async updateSessionMeta(_workspaceRoot: string, sessionId: string, meta: { title?: string; pinned?: boolean; archived?: boolean }): Promise<SessionInfo> {
+  async updateSessionMeta(
+    _workspaceRoot: string,
+    sessionId: string,
+    meta: { title?: string; pinned?: boolean; archived?: boolean },
+  ): Promise<SessionInfo> {
     let session = this.sessions.find((s) => s.sessionId === sessionId);
     if (!session) throw new Error("Session not found");
     if (meta.title !== undefined) session.title = meta.title;
@@ -397,7 +417,9 @@ export class MockAgentClient implements AgentClient {
   }
   subscribe(listener: (eventEnvelope: AgentEventEnvelope) => void): () => void {
     this.listeners.add(listener);
-    return () => { this.listeners.delete(listener); };
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
 }
 

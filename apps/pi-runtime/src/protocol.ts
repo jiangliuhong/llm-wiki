@@ -131,7 +131,13 @@ export type AgentEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: unknown }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: unknown; isError: boolean }
+  | {
+      type: "tool_execution_end";
+      toolCallId: string;
+      toolName: string;
+      result: unknown;
+      isError: boolean;
+    }
   | { type: "agent_end"; text?: string; stopReason?: string }
   | { type: "agent_error"; code: string; message: string; retryable: boolean }
   | { type: "session_deleted"; sessionId: string };

@@ -18,11 +18,13 @@ const TOOL_DESCRIPTIONS: Record<AllowedTool, string> = {
   document_read_range: "Read a line range of a workspace document.",
   document_relations: "List relations of a workspace document.",
   document_neighborhood: "List graph neighborhood of a workspace document.",
-  document_draft_create: "Create a staged draft document in the knowledge base. Target path must be workspace-relative under wiki/ (e.g. 'wiki/overview.md'). Generated content must be complete, high-quality Markdown.",
+  document_draft_create:
+    "Create a staged draft document in the knowledge base. Target path must be workspace-relative under wiki/ (e.g. 'wiki/overview.md'). Generated content must be complete, high-quality Markdown.",
   document_draft_get: "Get a staged draft document by draftId.",
   document_draft_list: "List staged draft documents in the workspace.",
   document_draft_delete: "Delete a staged draft document by draftId.",
-  relation_proposal_create: "Create a staged relation proposal between two documents for the knowledge graph. Requires source and target document paths, relation type, confidence score, rationale, and evidence lines.",
+  relation_proposal_create:
+    "Create a staged relation proposal between two documents for the knowledge graph. Requires source and target document paths, relation type, confidence score, rationale, and evidence lines.",
   relation_proposal_list: "List staged relation proposals in the workspace.",
 };
 
@@ -39,7 +41,9 @@ const TOOL_SCHEMAS: Record<AllowedTool, any> = {
   }),
   document_read: Type.Object({
     fileId: Type.Optional(Type.Number({ description: "Numeric ID of the file" })),
-    path: Type.Optional(Type.String({ description: "Workspace-relative document path (e.g. 'wiki/welcome.md')" })),
+    path: Type.Optional(
+      Type.String({ description: "Workspace-relative document path (e.g. 'wiki/welcome.md')" }),
+    ),
   }),
   document_read_range: Type.Object({
     fileId: Type.Optional(Type.Number({ description: "Numeric ID of the file" })),
@@ -57,18 +61,36 @@ const TOOL_SCHEMAS: Record<AllowedTool, any> = {
     depth: Type.Optional(Type.Number({ description: "Search depth (1-3, default: 1)" })),
   }),
   document_draft_create: Type.Object({
-    targetPath: Type.String({ description: "Target workspace-relative file path under wiki/ (e.g. 'wiki/architecture.md')" }),
-    generatedContent: Type.String({ description: "Full markdown content of the document to be saved" }),
-    operationType: Type.Optional(Type.Union([Type.Literal("create"), Type.Literal("update"), Type.Literal("append")], { description: "Operation type ('create', 'update', or 'append', default: 'create')" })),
-    sourceCitations: Type.Optional(Type.Array(Type.String(), { description: "List of document paths or source files referenced" })),
-    sectionSlug: Type.Optional(Type.String({ description: "Section slug if targeting a specific section in an update" })),
-    baseDocumentHash: Type.Optional(Type.String({ description: "Base document content hash if updating an existing document" })),
+    targetPath: Type.String({
+      description: "Target workspace-relative file path under wiki/ (e.g. 'wiki/architecture.md')",
+    }),
+    generatedContent: Type.String({
+      description: "Full markdown content of the document to be saved",
+    }),
+    operationType: Type.Optional(
+      Type.Union([Type.Literal("create"), Type.Literal("update"), Type.Literal("append")], {
+        description: "Operation type ('create', 'update', or 'append', default: 'create')",
+      }),
+    ),
+    sourceCitations: Type.Optional(
+      Type.Array(Type.String(), {
+        description: "List of document paths or source files referenced",
+      }),
+    ),
+    sectionSlug: Type.Optional(
+      Type.String({ description: "Section slug if targeting a specific section in an update" }),
+    ),
+    baseDocumentHash: Type.Optional(
+      Type.String({ description: "Base document content hash if updating an existing document" }),
+    ),
   }),
   document_draft_get: Type.Object({
     draftId: Type.String({ description: "Unique draft ID (e.g. 'draft-...')" }),
   }),
   document_draft_list: Type.Object({
-    status: Type.Optional(Type.String({ description: "Filter by draft status ('pending', 'applied', 'rejected')" })),
+    status: Type.Optional(
+      Type.String({ description: "Filter by draft status ('pending', 'applied', 'rejected')" }),
+    ),
   }),
   document_draft_delete: Type.Object({
     draftId: Type.String({ description: "Unique draft ID to delete" }),
@@ -76,16 +98,27 @@ const TOOL_SCHEMAS: Record<AllowedTool, any> = {
   relation_proposal_create: Type.Object({
     sourcePath: Type.String({ description: "Source document path (e.g. 'wiki/order.md')" }),
     targetPath: Type.String({ description: "Target document path (e.g. 'wiki/payment.md')" }),
-    relationType: Type.String({ description: "Relation type (e.g. 'depends_on', 'implements', 'extends', 'references', 'related_to')" }),
+    relationType: Type.String({
+      description:
+        "Relation type (e.g. 'depends_on', 'implements', 'extends', 'references', 'related_to')",
+    }),
     confidence: Type.Number({ description: "Confidence score between 0.0 and 1.0 (e.g. 0.9)" }),
     rationale: Type.String({ description: "Reason why this relationship exists" }),
-    evidencePath: Type.Optional(Type.String({ description: "Path of document containing the evidence" })),
-    evidenceStartLine: Type.Optional(Type.Number({ description: "Start line of evidence snippet" })),
+    evidencePath: Type.Optional(
+      Type.String({ description: "Path of document containing the evidence" }),
+    ),
+    evidenceStartLine: Type.Optional(
+      Type.Number({ description: "Start line of evidence snippet" }),
+    ),
     evidenceEndLine: Type.Optional(Type.Number({ description: "End line of evidence snippet" })),
-    evidenceText: Type.Optional(Type.String({ description: "Text snippet supporting the proposal" })),
+    evidenceText: Type.Optional(
+      Type.String({ description: "Text snippet supporting the proposal" }),
+    ),
   }),
   relation_proposal_list: Type.Object({
-    status: Type.Optional(Type.String({ description: "Filter by proposal status ('pending', 'approved', 'rejected')" })),
+    status: Type.Optional(
+      Type.String({ description: "Filter by proposal status ('pending', 'approved', 'rejected')" }),
+    ),
   }),
 };
 
@@ -109,7 +142,9 @@ export class HostToolBridge {
    * Called when a tool_result response is received from the Host.
    */
   handleToolResult(response: ToolResultResponse): boolean {
-    const entry = this.pending.get(response.toolCallId) ?? (response.id ? this.pending.get(response.id) : undefined);
+    const entry =
+      this.pending.get(response.toolCallId) ??
+      (response.id ? this.pending.get(response.id) : undefined);
     if (!entry) return false;
 
     clearTimeout(entry.timer);
@@ -184,7 +219,11 @@ export class HostToolBridge {
   /**
    * Builds custom ToolDefinition array for Pi SDK.
    */
-  buildCustomTools(scope: { sessionId: string; workspaceId: string; workspaceRoot: string }): ToolDefinition[] {
+  buildCustomTools(scope: {
+    sessionId: string;
+    workspaceId: string;
+    workspaceRoot: string;
+  }): ToolDefinition[] {
     return ALLOWED_TOOLS.map((toolName) => {
       return defineTool({
         name: toolName,

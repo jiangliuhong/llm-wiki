@@ -76,10 +76,7 @@ function assertKb(value: unknown): void {
     }
     const embedding = kb.embedding as Record<string, unknown>;
     if (embedding.enabled !== undefined && typeof embedding.enabled !== "boolean") {
-      throw new ConfigError(
-        `Invalid config: "kb.embedding.enabled" must be a boolean.`,
-        "ESHAPE",
-      );
+      throw new ConfigError(`Invalid config: "kb.embedding.enabled" must be a boolean.`, "ESHAPE");
     }
     if (embedding.dimensions !== undefined) {
       assertPositiveInt(embedding.dimensions, "kb.embedding.dimensions");
@@ -174,8 +171,10 @@ function mergeKb(partial: WikiConfig["kb"]): NonNullable<WikiConfig["kb"]> {
     return structuredClone(base);
   }
   return {
-    include: partial.include && partial.include.length > 0 ? [...partial.include] : [...base.include],
-    exclude: partial.exclude && partial.exclude.length > 0 ? [...partial.exclude] : [...base.exclude],
+    include:
+      partial.include && partial.include.length > 0 ? [...partial.include] : [...base.include],
+    exclude:
+      partial.exclude && partial.exclude.length > 0 ? [...partial.exclude] : [...base.exclude],
     chunk: {
       maxChars: partial.chunk?.maxChars ?? base.chunk.maxChars,
       overlap: partial.chunk?.overlap ?? base.chunk.overlap,

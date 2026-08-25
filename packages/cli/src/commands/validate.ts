@@ -58,7 +58,10 @@ function runValidate(options: ValidateOptions, cmd: Command): void {
   if ((!raw.db || raw.db.length === 0) && (!raw.kb || raw.kb.length === 0)) {
     process.stderr.write(
       JSON.stringify({
-        error: { code: "ARGS_DB_REQUIRED", message: "validate requires --db <path> or --workspace <id>" },
+        error: {
+          code: "ARGS_DB_REQUIRED",
+          message: "validate requires --db <path> or --workspace <id>",
+        },
       }) + "\n",
     );
     process.exitCode = 4; // EXIT_ARGS

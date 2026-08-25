@@ -32,10 +32,7 @@ export function makeStatusCommand(): Command {
     .description("Report index health, provenance, and whether a rebuild is needed")
     .option("--json", "Output a machine-readable status object", false)
     .option("--target-revision <sha>", "Expected source revision to compare against the index")
-    .option(
-      "--no-config-check",
-      "Skip comparing the current config hash against the stored index",
-    )
+    .option("--no-config-check", "Skip comparing the current config hash against the stored index")
     .action((options: StatusOptions, cmd: Command) => {
       runStatus(options, cmd);
     });
@@ -93,10 +90,7 @@ function runStatus(options: StatusOptions, cmd: Command): void {
       closeConnection(conn);
     }
   } catch (err) {
-    emitError(
-      new CliError("DB_OPEN_FAILED", (err as Error).message, ExitCode.DB),
-      { json },
-    );
+    emitError(new CliError("DB_OPEN_FAILED", (err as Error).message, ExitCode.DB), { json });
     return;
   }
 

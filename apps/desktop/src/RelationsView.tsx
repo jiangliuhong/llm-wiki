@@ -83,7 +83,16 @@ const TOP_PAD = 96;
 const BOT_PAD = 44;
 const MIN_SCALE = 0.32;
 const MAX_SCALE = 1.6;
-const PALETTE = ["#5b6cf9", "#0fa8c7", "#20a464", "#c27b1d", "#9660d8", "#db5a5a", "#2f75bd", "#c14d80"];
+const PALETTE = [
+  "#5b6cf9",
+  "#0fa8c7",
+  "#20a464",
+  "#c27b1d",
+  "#9660d8",
+  "#db5a5a",
+  "#2f75bd",
+  "#c14d80",
+];
 
 interface GraphNode {
   id: string;
@@ -150,12 +159,25 @@ function docName(path: string): string {
 }
 
 /** Cubic bezier through (x0,y0)..(x3,y3); returns the SVG path plus its midpoint. */
-function curve(x0: number, y0: number, x1: number, y1: number, x2: number, y2: number, x3: number, y3: number): { d: string; lx: number; ly: number } {
+function curve(
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  x3: number,
+  y3: number,
+): { d: string; lx: number; ly: number } {
   const d = `M ${x0.toFixed(1)} ${y0.toFixed(1)} C ${x1.toFixed(1)} ${y1.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}, ${x3.toFixed(1)} ${y3.toFixed(1)}`;
   return { d, lx: (x0 + 3 * x1 + 3 * x2 + x3) / 8, ly: (y0 + 3 * y1 + 3 * y2 + y3) / 8 };
 }
 
-function edgeGeometry(a: GraphNode, b: GraphNode, offset: number): { d: string; lx: number; ly: number } {
+function edgeGeometry(
+  a: GraphNode,
+  b: GraphNode,
+  offset: number,
+): { d: string; lx: number; ly: number } {
   const aR = a.x + a.w;
   const bR = b.x + b.w;
   const aCy = a.y + a.h / 2;
@@ -186,11 +208,20 @@ function edgeGeometry(a: GraphNode, b: GraphNode, offset: number): { d: string; 
  * fixed world box that the canvas then pans/zooms over.
  */
 function buildGraphModel(published: DocumentRelation[]): GraphModel {
-  const info = new Map<string, { title: string; cluster: string; out: number; inc: number; neighbors: Set<string> }>();
+  const info = new Map<
+    string,
+    { title: string; cluster: string; out: number; inc: number; neighbors: Set<string> }
+  >();
   const ensure = (path: string, title: string): void => {
     let entry = info.get(path);
     if (!entry) {
-      entry = { title: title || docName(path), cluster: clusterOf(path), out: 0, inc: 0, neighbors: new Set() };
+      entry = {
+        title: title || docName(path),
+        cluster: clusterOf(path),
+        out: 0,
+        inc: 0,
+        neighbors: new Set(),
+      };
       info.set(path, entry);
     } else if (title && entry.title === docName(path)) {
       entry.title = title;
@@ -249,7 +280,8 @@ function buildGraphModel(published: DocumentRelation[]): GraphModel {
     columns.set(d, arr);
   }
   const colDepths = Array.from(columns.keys()).sort((a, b) => a - b);
-  const columnHeight = (arr: string[]): number => arr.reduce((h, p) => h + nodeH(p) + ROW_GAP, -ROW_GAP);
+  const columnHeight = (arr: string[]): number =>
+    arr.reduce((h, p) => h + nodeH(p) + ROW_GAP, -ROW_GAP);
   const contentH = colDepths.reduce((h, d) => Math.max(h, columnHeight(columns.get(d) ?? [])), 0);
   const worldH = TOP_PAD + contentH + BOT_PAD;
 
@@ -270,7 +302,9 @@ function buildGraphModel(published: DocumentRelation[]): GraphModel {
     if (lastArr.some((p) => !reached.has(p))) detachedDepth = last;
   }
   colDepths.forEach((d, ci) => {
-    const arr = (columns.get(d) ?? []).slice().sort((a, b) => degree(b) - degree(a) || a.localeCompare(b));
+    const arr = (columns.get(d) ?? [])
+      .slice()
+      .sort((a, b) => degree(b) - degree(a) || a.localeCompare(b));
     const x = PAD_X + ci * (NODE_W + COL_GAP);
     const h = columnHeight(arr);
     const y0 = TOP_PAD + (contentH - h) / 2;
@@ -299,22 +333,39 @@ function buildGraphModel(published: DocumentRelation[]): GraphModel {
       y: TOP_PAD - 46,
       w: NODE_W + 52,
       h: h + 62,
-      label: d === detachedDepth ? "未直接连通" : d === 0 ? "核心文档" : d === 1 ? "一跳关联" : d === 2 ? "二跳关联" : `第 ${d + 1} 层`,
+      label:
+        d === detachedDepth
+          ? "未直接连通"
+          : d === 0
+            ? "核心文档"
+            : d === 1
+              ? "一跳关联"
+              : d === 2
+                ? "二跳关联"
+                : `第 ${d + 1} 层`,
     });
   });
-  const worldW = colDepths.length > 0 ? PAD_X * 2 + (colDepths.length - 1) * (NODE_W + COL_GAP) + NODE_W : 480;
+  const worldW =
+    colDepths.length > 0 ? PAD_X * 2 + (colDepths.length - 1) * (NODE_W + COL_GAP) + NODE_W : 480;
 
   // Relation-type palette assignment, then edges (with spread when a pair has
   // several relations so their curves do not overlap exactly).
   const typeCounts = new Map<string, number>();
-  for (const rel of published) typeCounts.set(rel.relationType, (typeCounts.get(rel.relationType) ?? 0) + 1);
+  for (const rel of published)
+    typeCounts.set(rel.relationType, (typeCounts.get(rel.relationType) ?? 0) + 1);
   const types = Array.from(typeCounts.entries())
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([id, count], i) => ({ id, label: prettyType(id), count, color: PALETTE[i % PALETTE.length] ?? "#5b6cf9" }));
+    .map(([id, count], i) => ({
+      id,
+      label: prettyType(id),
+      count,
+      color: PALETTE[i % PALETTE.length] ?? "#5b6cf9",
+    }));
   const typeColor = new Map(types.map((t) => [t.id, t.color]));
 
   const pairTotal = new Map<string, number>();
-  const pairKey = (from: string, to: string): string => (from < to ? `${from}\u0000${to}` : `${to}\u0000${from}`);
+  const pairKey = (from: string, to: string): string =>
+    from < to ? `${from}\u0000${to}` : `${to}\u0000${from}`;
   for (const rel of published) {
     const key = pairKey(rel.sourcePath, rel.targetPath);
     pairTotal.set(key, (pairTotal.get(key) ?? 0) + 1);
@@ -393,25 +444,91 @@ function rgba(hex: string, alpha: number): string {
 // --- Icons (line-style SVG paths from the preview prototype) -----------------
 
 const ICON_PATHS: Record<string, React.ReactNode> = {
-  file: (<><path d="M6 3.5h8.5L19 8v12.5H6v-17Z" /><path d="M14.5 3.5V8H19M9 12h7M9 15h7M9 18h4" /></>),
-  search: (<><circle cx="10.5" cy="10.5" r="6.2" /><path d="m15.2 15.2 4.3 4.3" /></>),
+  file: (
+    <>
+      <path d="M6 3.5h8.5L19 8v12.5H6v-17Z" />
+      <path d="M14.5 3.5V8H19M9 12h7M9 15h7M9 18h4" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.2" />
+      <path d="m15.2 15.2 4.3 4.3" />
+    </>
+  ),
   x: <path d="m6 6 12 12M18 6 6 18" />,
-  target: (<><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="3.5" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></>),
+  target: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    </>
+  ),
   check: <path d="m6.5 12.5 3.4 3.4 7.6-8" />,
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,
-  fit: (<><rect x="3.5" y="4" width="7" height="7" rx="1.5" /><rect x="13.5" y="4" width="7" height="4" rx="1.5" /><rect x="13.5" y="11" width="7" height="9" rx="1.5" /><rect x="3.5" y="14" width="7" height="6" rx="1.5" /></>),
-  label: (<><path d="M4 6h9l7 6-7 6H4V6Z" /><circle cx="8" cy="12" r="1.4" fill="currentColor" stroke="none" /></>),
-  link: <path d="m9.5 14.5 5-5M7.8 17.5l-1.3 1.3a3.7 3.7 0 1 1-5.3-5.3l3-3a3.7 3.7 0 0 1 5.3 0M16.2 6.5l1.3-1.3a3.7 3.7 0 1 1 5.3 5.3l-3 3a3.7 3.7 0 0 1-5.3 0" />,
-  more: (<><circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" /></>),
-  spark: (<><path d="m12 3 1.5 5.2L19 10l-5.5 1.8L12 17l-1.5-5.2L5 10l5.5-1.8L12 3Z" /><path d="m18.5 15 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7.7-2.3Z" fill="currentColor" stroke="none" /></>),
+  fit: (
+    <>
+      <rect x="3.5" y="4" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="4" width="7" height="4" rx="1.5" />
+      <rect x="13.5" y="11" width="7" height="9" rx="1.5" />
+      <rect x="3.5" y="14" width="7" height="6" rx="1.5" />
+    </>
+  ),
+  label: (
+    <>
+      <path d="M4 6h9l7 6-7 6H4V6Z" />
+      <circle cx="8" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </>
+  ),
+  link: (
+    <path d="m9.5 14.5 5-5M7.8 17.5l-1.3 1.3a3.7 3.7 0 1 1-5.3-5.3l3-3a3.7 3.7 0 0 1 5.3 0M16.2 6.5l1.3-1.3a3.7 3.7 0 1 1 5.3 5.3l-3 3a3.7 3.7 0 0 1-5.3 0" />
+  ),
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </>
+  ),
+  spark: (
+    <>
+      <path d="m12 3 1.5 5.2L19 10l-5.5 1.8L12 17l-1.5-5.2L5 10l5.5-1.8L12 3Z" />
+      <path
+        d="m18.5 15 .7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7.7-2.3Z"
+        fill="currentColor"
+        stroke="none"
+      />
+    </>
+  ),
   external: <path d="M13 5h6v6M19 5l-8 8M18 14v5H5V6h5" />,
   refresh: <path d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4" />,
 };
 
-function GIcon({ name, size = 16, strokeWidth = 1.7, className }: { name: string; size?: number; strokeWidth?: number; className?: string }): React.ReactElement {
+function GIcon({
+  name,
+  size = 16,
+  strokeWidth = 1.7,
+  className,
+}: {
+  name: string;
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+}): React.ReactElement {
   return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       {ICON_PATHS[name] ?? null}
     </svg>
   );
@@ -436,7 +553,13 @@ function demoPayload(): RelationsPayload {
   const byPath = new Map(nodes);
   const published: DocumentRelation[] = [];
   let nextId = 1;
-  const edge = (from: string, to: string, type: string, symmetric: boolean, evidenced: boolean): void => {
+  const edge = (
+    from: string,
+    to: string,
+    type: string,
+    symmetric: boolean,
+    evidenced: boolean,
+  ): void => {
     published.push({
       id: nextId++,
       sourceFileId: nextId,
@@ -448,40 +571,106 @@ function demoPayload(): RelationsPayload {
       relationType: type,
       symmetric,
       evidence: evidenced
-        ? [{ id: nextId + 500, sourceKind: "frontmatter", originalTarget: to, sourcePath: from, startLine: 4, endLine: 9, evidenceText: null, rationale: "frontmatter relations 声明", confidence: 0.9 }]
+        ? [
+            {
+              id: nextId + 500,
+              sourceKind: "frontmatter",
+              originalTarget: to,
+              sourcePath: from,
+              startLine: 4,
+              endLine: 9,
+              evidenceText: null,
+              rationale: "frontmatter relations 声明",
+              confidence: 0.9,
+            },
+          ]
         : [],
     });
   };
   edge("wiki/P&L系统/预测场景说明.md", "wiki/P&L系统/BI预测逻辑说明.md", "references", false, true);
   edge("wiki/P&L系统/参数集定义.md", "wiki/P&L系统/BI预测逻辑说明.md", "references", false, true);
   edge("wiki/P&L系统/预测场景说明.md", "wiki/P&L系统/参数集定义.md", "related_to", true, true);
-  edge("wiki/数据仓库/pl_forecast_user_flow_metrics.md", "wiki/P&L系统/GMV计算说明.md", "depends_on", false, true);
+  edge(
+    "wiki/数据仓库/pl_forecast_user_flow_metrics.md",
+    "wiki/P&L系统/GMV计算说明.md",
+    "depends_on",
+    false,
+    true,
+  );
   edge("wiki/P&L系统/GMV计算说明.md", "wiki/P&L系统/BI预测逻辑说明.md", "references", false, true);
   edge("wiki/P&L系统/BI预测逻辑说明.md", "wiki/P&L系统/数据分层说明.md", "extends", false, true);
-  edge("wiki/P&L系统/数据分层说明.md", "wiki/数据仓库/pl_forecast_result_monthly.md", "references", false, true);
-  edge("wiki/数据仓库/pl_forecast_user_flow_metrics.md", "wiki/数据仓库/pl_forecast_result_monthly.md", "depends_on", false, false);
-  edge("wiki/数据仓库/pl_forecast_result_monthly.md", "wiki/指标/收入指标.md", "aggregates", false, false);
-  edge("wiki/数据仓库/pl_forecast_result_monthly.md", "wiki/指标/成本指标.md", "aggregates", false, false);
+  edge(
+    "wiki/P&L系统/数据分层说明.md",
+    "wiki/数据仓库/pl_forecast_result_monthly.md",
+    "references",
+    false,
+    true,
+  );
+  edge(
+    "wiki/数据仓库/pl_forecast_user_flow_metrics.md",
+    "wiki/数据仓库/pl_forecast_result_monthly.md",
+    "depends_on",
+    false,
+    false,
+  );
+  edge(
+    "wiki/数据仓库/pl_forecast_result_monthly.md",
+    "wiki/指标/收入指标.md",
+    "aggregates",
+    false,
+    false,
+  );
+  edge(
+    "wiki/数据仓库/pl_forecast_result_monthly.md",
+    "wiki/指标/成本指标.md",
+    "aggregates",
+    false,
+    false,
+  );
   edge("wiki/指标/收入指标.md", "wiki/指标/利润指标.md", "feeds_into", false, true);
   edge("wiki/指标/成本指标.md", "wiki/指标/利润指标.md", "feeds_into", false, true);
   edge("wiki/指标/利润指标.md", "wiki/BI/利润看板.md", "consumed_by", false, true);
-  edge("wiki/数据仓库/pl_forecast_result_monthly.md", "wiki/BI/利润看板.md", "consumed_by", false, false);
+  edge(
+    "wiki/数据仓库/pl_forecast_result_monthly.md",
+    "wiki/BI/利润看板.md",
+    "consumed_by",
+    false,
+    false,
+  );
   const proposals: RelationProposal[] = [
     {
-      id: 901, sourceFileId: 3, targetFileId: 8,
-      sourcePath: "wiki/P&L系统/GMV计算说明.md", targetPath: "wiki/指标/收入指标.md",
-      relationType: "feeds_into", confidence: 0.82,
+      id: 901,
+      sourceFileId: 3,
+      targetFileId: 8,
+      sourcePath: "wiki/P&L系统/GMV计算说明.md",
+      targetPath: "wiki/指标/收入指标.md",
+      relationType: "feeds_into",
+      confidence: 0.82,
       rationale: "GMV 计算说明中的预计收入章节与收入指标口径使用同一公式，疑似直接上下游。",
-      evidencePath: "wiki/P&L系统/GMV计算说明.md", evidenceStartLine: 42, evidenceEndLine: 55,
-      evidenceText: null, status: "pending", createdAt: "2026-08-13T09:12:00Z", reviewedAt: null,
+      evidencePath: "wiki/P&L系统/GMV计算说明.md",
+      evidenceStartLine: 42,
+      evidenceEndLine: 55,
+      evidenceText: null,
+      status: "pending",
+      createdAt: "2026-08-13T09:12:00Z",
+      reviewedAt: null,
     },
     {
-      id: 902, sourceFileId: 5, targetFileId: 11,
-      sourcePath: "wiki/数据仓库/pl_forecast_result_monthly.md", targetPath: "wiki/BI/利润看板.md",
-      relationType: "consumed_by", confidence: 0.64,
+      id: 902,
+      sourceFileId: 5,
+      targetFileId: 11,
+      sourcePath: "wiki/数据仓库/pl_forecast_result_monthly.md",
+      targetPath: "wiki/BI/利润看板.md",
+      relationType: "consumed_by",
+      confidence: 0.64,
       rationale: "看板文档引用了结果宽表的字段清单，建议补充字段级证据。",
-      evidencePath: "wiki/BI/利润看板.md", evidenceStartLine: 20, evidenceEndLine: 28,
-      evidenceText: null, status: "pending", createdAt: "2026-08-13T10:02:00Z", reviewedAt: null,
+      evidencePath: "wiki/BI/利润看板.md",
+      evidenceStartLine: 20,
+      evidenceEndLine: 28,
+      evidenceText: null,
+      status: "pending",
+      createdAt: "2026-08-13T10:02:00Z",
+      reviewedAt: null,
     },
   ];
   return { proposals, published };
@@ -493,7 +682,12 @@ type RangeMode = "global" | "one" | "two";
 
 const RANGE_LABELS: Record<RangeMode, string> = { global: "全局", one: "一跳", two: "两跳" };
 
-export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onIndexed }: RelationsViewProps): React.ReactElement {
+export default function RelationsView({
+  workspace,
+  onAskAI,
+  onOpenDocuments,
+  onIndexed,
+}: RelationsViewProps): React.ReactElement {
   const [state, setState] = useState<LoadState<RelationsPayload>>({ status: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
   const [indexing, setIndexing] = useState(false);
@@ -530,9 +724,15 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
     setState({ status: "loading" });
     setIsDemo(false);
     void invoke<RelationsPayload>("relations_list", { root: workspace.root })
-      .then((data) => { if (!cancelled) setState({ status: "ready", data }); })
-      .catch((reason: unknown) => { if (!cancelled) setState({ status: "error", message: String(reason) }); });
-    return () => { cancelled = true; };
+      .then((data) => {
+        if (!cancelled) setState({ status: "ready", data });
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setState({ status: "error", message: String(reason) });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [workspace, reloadKey]);
 
   const model = useMemo(
@@ -604,22 +804,25 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
     toastTimer.current = window.setTimeout(() => setToast(null), 1800);
   }, []);
 
-  const selectNode = useCallback((id: string | null, center = false): void => {
-    setSelectedId(id);
-    if (id && center && model) {
-      const node = model.nodes.find((n) => n.id === id);
-      if (node && stageRef.current) {
-        const sw = stageRef.current.clientWidth;
-        const sh = stageRef.current.clientHeight;
-        const curScale = camera.scale;
-        setCamera({
-          x: sw / 2 - (node.x + node.w / 2) * curScale,
-          y: sh / 2 - (node.y + node.h / 2) * curScale,
-          scale: curScale,
-        });
+  const selectNode = useCallback(
+    (id: string | null, center = false): void => {
+      setSelectedId(id);
+      if (id && center && model) {
+        const node = model.nodes.find((n) => n.id === id);
+        if (node && stageRef.current) {
+          const sw = stageRef.current.clientWidth;
+          const sh = stageRef.current.clientHeight;
+          const curScale = camera.scale;
+          setCamera({
+            x: sw / 2 - (node.x + node.w / 2) * curScale,
+            y: sh / 2 - (node.y + node.h / 2) * curScale,
+            scale: curScale,
+          });
+        }
       }
-    }
-  }, [camera.scale, model]);
+    },
+    [camera.scale, model],
+  );
 
   const fit = useCallback((): void => {
     if (!stageRef.current || !model) return;
@@ -653,7 +856,8 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
   const [approvingAll, setApprovingAll] = useState(false);
 
   const handleStartGlobalRelationAnalysis = useCallback((): void => {
-    const prompt = "请使用 document_list 和 document_read 工具全面阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具为发现的文档间依赖 (depends_on)、实现 (implements)、能力继承 (extends) 或重要语义引用关系创建带行号证据的关系提案。";
+    const prompt =
+      "请使用 document_list 和 document_read 工具全面阅读并分析当前知识库的所有 Markdown 文档，使用 relation_proposal_create 工具为发现的文档间依赖 (depends_on)、实现 (implements)、能力继承 (extends) 或重要语义引用关系创建带行号证据的关系提案。";
     onAskAI(prompt, false);
   }, [onAskAI]);
 
@@ -721,7 +925,9 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
   };
 
   // Refit when the graph, range mode or cluster filter changes.
-  useEffect(() => { fit(); }, [fit, rangeMode, activeCluster]);
+  useEffect(() => {
+    fit();
+  }, [fit, rangeMode, activeCluster]);
 
   // Wheel zoom needs a non-passive listener, so it is attached imperatively.
   useEffect(() => {
@@ -765,7 +971,10 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
     return (
       <div className="doc-empty-container">
         <div className="doc-empty-card">
-          <div className="doc-empty-icon" style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}>
+          <div
+            className="doc-empty-icon"
+            style={{ background: "var(--danger-subtle)", color: "var(--danger)" }}
+          >
             <GIcon name="x" size={28} />
           </div>
           <h2>无法加载关系图谱</h2>
@@ -786,7 +995,10 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
       return (
         <div className="doc-empty-container">
           <div className="doc-empty-card" style={{ maxWidth: 660 }}>
-            <div className="doc-empty-icon" style={{ background: "var(--accent-subtle)", color: "var(--accent)" }}>
+            <div
+              className="doc-empty-icon"
+              style={{ background: "var(--accent-subtle)", color: "var(--accent)" }}
+            >
               <GIcon name="spark" size={28} />
             </div>
             <h2>已发现 {pendingProposalsList.length} 条待审核关系提案</h2>
@@ -794,11 +1006,16 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
               AI 智能体已为当前知识库挖掘出潜在关联。批准提案后将自动绘制关系拓扑网络。
             </p>
 
-            <div className="rg-proposal-list" style={{ margin: "16px 0", maxHeight: 260, overflowY: "auto", textAlign: "left" }}>
+            <div
+              className="rg-proposal-list"
+              style={{ margin: "16px 0", maxHeight: 260, overflowY: "auto", textAlign: "left" }}
+            >
               {pendingProposalsList.map((p) => (
                 <div key={p.id} className="rg-proposal">
                   <div className="rg-proposal-header">
-                    <span className="rg-proposal-title">{docName(p.sourcePath)} → {docName(p.targetPath)}</span>
+                    <span className="rg-proposal-title">
+                      {docName(p.sourcePath)} → {docName(p.targetPath)}
+                    </span>
                     <span className="rg-proposal-type">{prettyType(p.relationType)}</span>
                   </div>
                   <div className="rg-proposal-meta">
@@ -833,7 +1050,11 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
                 onClick={() => void handleApproveAllProposals()}
               >
                 <GIcon name="check" size={14} />
-                <span>{approvingAll ? "正在批准全部…" : `一键批准全部提案 (${pendingProposalsList.length})`}</span>
+                <span>
+                  {approvingAll
+                    ? "正在批准全部…"
+                    : `一键批准全部提案 (${pendingProposalsList.length})`}
+                </span>
               </button>
               <button
                 type="button"
@@ -861,17 +1082,27 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
           </p>
 
           <div className="doc-quick-dirs-section" style={{ marginBottom: 20 }}>
-            <div style={{ display: "grid", gap: "10px", fontSize: "12.5px", color: "var(--text-secondary)" }}>
+            <div
+              style={{
+                display: "grid",
+                gap: "10px",
+                fontSize: "12.5px",
+                color: "var(--text-secondary)",
+              }}
+            >
               <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
                 <span style={{ flex: "0 0 18px", color: "var(--accent)" }}>1.</span>
                 <div>
-                  <strong style={{ color: "var(--text-main)" }}>确定性文档关系</strong>：识别 Markdown 内链 (<code>[标题](doc.md)</code>)、双链 (<code>[[文档]]</code>) 或 Frontmatter <code>relations:</code> 声明。
+                  <strong style={{ color: "var(--text-main)" }}>确定性文档关系</strong>：识别
+                  Markdown 内链 (<code>[标题](doc.md)</code>)、双链 (<code>[[文档]]</code>) 或
+                  Frontmatter <code>relations:</code> 声明。
                 </div>
               </div>
               <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
                 <span style={{ flex: "0 0 18px", color: "var(--accent)" }}>2.</span>
                 <div>
-                  <strong style={{ color: "var(--text-main)" }}>AI 语义推理关系</strong>：由 Agent 深度推理发现跨文档逻辑依赖或衍生引用，审核通过后即刻入图。
+                  <strong style={{ color: "var(--text-main)" }}>AI 语义推理关系</strong>：由 Agent
+                  深度推理发现跨文档逻辑依赖或衍生引用，审核通过后即刻入图。
                 </div>
               </div>
             </div>
@@ -893,7 +1124,9 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
               onClick={() => void handleEmptyReindex()}
             >
               <GIcon name="refresh" size={14} />
-              <span className={indexing ? "spin" : ""}>{indexing ? "正在重新索引中…" : "重新扫描内链/双链"}</span>
+              <span className={indexing ? "spin" : ""}>
+                {indexing ? "正在重新索引中…" : "重新扫描内链/双链"}
+              </span>
             </button>
             <button type="button" className="tool-button" onClick={onOpenDocuments}>
               <GIcon name="file" size={14} />
@@ -901,14 +1134,19 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
             </button>
           </div>
 
-          {indexError && <div className="doc-status-banner error" style={{ marginTop: 14 }}>索引失败：{indexError}</div>}
+          {indexError && (
+            <div className="doc-status-banner error" style={{ marginTop: 14 }}>
+              索引失败：{indexError}
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
   const q = query.trim().toLowerCase();
-  const nodeMatches = (n: GraphNode): boolean => !q || `${n.title} ${n.path}`.toLowerCase().includes(q);
+  const nodeMatches = (n: GraphNode): boolean =>
+    !q || `${n.title} ${n.path}`.toLowerCase().includes(q);
   const pendingProposals = proposals.filter((p) => p.status === "pending");
 
   const toggleType = (id: string): void => {
@@ -946,398 +1184,668 @@ export default function RelationsView({ workspace, onAskAI, onOpenDocuments, onI
 
   const copyNodeLink = async (): Promise<void> => {
     if (!selected) return;
-    try { await navigator.clipboard.writeText(`llm-wiki://graph/${selected.path}`); } catch { /* clipboard unavailable */ }
+    try {
+      await navigator.clipboard.writeText(`llm-wiki://graph/${selected.path}`);
+    } catch {
+      /* clipboard unavailable */
+    }
     showToast("已复制节点链接");
   };
 
-  const relEdges = selected ? model.edges.filter((e) => e.from === selected.id || e.to === selected.id) : [];
+  const relEdges = selected
+    ? model.edges.filter((e) => e.from === selected.id || e.to === selected.id)
+    : [];
   const outEdges = relEdges.filter((e) => e.from === selectedId);
   const inEdges = relEdges.filter((e) => e.to === selectedId);
   const tabbedEdges = relationTab === "out" ? outEdges : relationTab === "in" ? inEdges : relEdges;
   const nodeTypeTags = selected
-    ? Array.from(new Set(relEdges.map((e) => e.type))).slice(0, 4).map(prettyType)
+    ? Array.from(new Set(relEdges.map((e) => e.type)))
+        .slice(0, 4)
+        .map(prettyType)
     : [];
 
-  const graphTitle = activeCluster ? `${activeCluster} · 关系图谱` : rangeMode === "global" ? "全局知识网络" : `${RANGE_LABELS[rangeMode]}邻域视图`;
+  const graphTitle = activeCluster
+    ? `${activeCluster} · 关系图谱`
+    : rangeMode === "global"
+      ? "全局知识网络"
+      : `${RANGE_LABELS[rangeMode]}邻域视图`;
 
-  return <div className="relations-page">
-    {/* --- Left: explorer / filters --------------------------------------- */}
-    <aside className="rg-explorer">
-      <div className="rg-panel-head">
-        <div className="rg-panel-copy">
-          <div className="rg-panel-title">图谱浏览器</div>
-          <div className="rg-panel-sub">筛选节点与关系范围</div>
-        </div>
-        <button className="rg-icon-btn" title="重置筛选" onClick={resetFilters}><GIcon name="target" size={15} /></button>
-      </div>
-      <div className="rg-panel-scroll">
-        <label className="rg-search">
-          <GIcon name="search" size={15} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={onSearchKeyDown} placeholder="查找节点" />
-          {q && <button className="rg-clear" aria-label="清除搜索" onClick={() => setQuery("")}><GIcon name="x" size={12} /></button>}
-        </label>
-
-        <div className="rg-range-switch" role="group" aria-label="视图范围">
-          {(Object.keys(RANGE_LABELS) as RangeMode[]).map((mode) => (
-            <button key={mode} className={rangeMode === mode ? "active" : ""} onClick={() => setRangeMode(mode)}>
-              {RANGE_LABELS[mode]}
-            </button>
-          ))}
-        </div>
-        <p className="rg-range-hint">{rangeMode === "global" ? "显示图谱中的全部节点" : `围绕${selected ? "选中节点" : "核心文档"}展示邻域`}</p>
-
-        <section className="rg-section">
-          <div className="rg-kicker"><span>图谱概览</span></div>
-          <div className="rg-stats">
-            <div className="rg-stat"><strong>{visibleNodeCount}</strong><span>可见节点</span></div>
-            <div className="rg-stat"><strong>{visibleEdgeCount}</strong><span>关系边</span></div>
-            <div className="rg-stat"><strong>{model.clusters.length}</strong><span>目录簇</span></div>
-            <div className="rg-stat"><strong>{pendingProposals.length}</strong><span>待审核</span></div>
+  return (
+    <div className="relations-page">
+      {/* --- Left: explorer / filters --------------------------------------- */}
+      <aside className="rg-explorer">
+        <div className="rg-panel-head">
+          <div className="rg-panel-copy">
+            <div className="rg-panel-title">图谱浏览器</div>
+            <div className="rg-panel-sub">筛选节点与关系范围</div>
           </div>
-        </section>
-
-        {model.types.length > 0 && (
-          <section className="rg-section">
-            <div className="rg-kicker"><span>关系类型</span><button onClick={toggleAllTypes}>{allTypesOff ? "全部显示" : "全部隐藏"}</button></div>
-            <div className="rg-type-list">
-              {model.types.map((t) => {
-                const on = typeSet.has(t.id);
-                return (
-                  <button key={t.id} className={on ? "rg-type-row on" : "rg-type-row off"} onClick={() => toggleType(t.id)}>
-                    <span className="rg-type-check">{on && <GIcon name="check" size={11} strokeWidth={2.2} />}</span>
-                    <span className="rg-type-name"><i className="rg-type-dot" style={{ background: t.color }} />{t.label}</span>
-                    <span className="rg-type-count">{t.count}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {model.clusters.length > 1 && (
-          <section className="rg-section">
-            <div className="rg-kicker"><span>目录簇</span><button onClick={() => setActiveCluster(null)}>清除</button></div>
-            <div className="rg-cluster-list">
-              {model.clusters.map((c) => {
-                const maxCount = model.clusters[0]?.count ?? c.count;
-                return (
-                  <button
-                    key={c.id}
-                    className={activeCluster === c.id ? "rg-cluster active" : "rg-cluster"}
-                    style={{ "--cluster-color": c.color, "--cluster-progress": `${Math.max(12, Math.round((c.count / Math.max(1, maxCount)) * 100))}%` } as React.CSSProperties}
-                    onClick={() => setActiveCluster(activeCluster === c.id ? null : c.id)}
-                  >
-                    <span className="rg-cluster-top">
-                      <i className="rg-cluster-swatch" />
-                      <span className="rg-cluster-name">{c.id}</span>
-                      <span className="rg-cluster-count">{c.count} 节点</span>
-                    </span>
-                    <span className="rg-cluster-bar"><span /></span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        <section className="rg-section">
-          <div className="rg-kicker"><span>关系设置</span></div>
-          <div className="rg-control-row">
-            <span>仅显示强关系</span>
-            <button className={strongOnly ? "rg-toggle on" : "rg-toggle"} aria-label="仅显示强关系" onClick={() => setStrongOnly((v) => !v)} />
-          </div>
-          <div className="rg-control-row">
-            <span>显示关系名称</span>
-            <button className={showLabels ? "rg-toggle on" : "rg-toggle"} aria-label="显示关系名称" onClick={() => setShowLabels((v) => !v)} />
-          </div>
-          <p className="rg-range-hint">强关系 = 有证据支撑或对称的关系；弱关系以虚线显示。</p>
-        </section>
-
-        {pendingProposals.length > 0 && (
-          <section className="rg-section">
-            <div className="rg-kicker-row">
-              <div className="rg-kicker"><span>待审核候选 · {pendingProposals.length}</span></div>
-              <button
-                className="rg-prop-all-btn"
-                disabled={approvingAll}
-                onClick={() => void handleApproveAllProposals()}
-              >
-                {approvingAll ? "批准中…" : "全部批准"}
-              </button>
-            </div>
-            <div className="rg-proposal-list">
-              {pendingProposals.slice(0, 10).map((p) => (
-                <div key={p.id} className="rg-proposal" title={p.rationale}>
-                  <div className="rg-proposal-header">
-                    <span className="rg-proposal-title">{docName(p.sourcePath)} → {docName(p.targetPath)}</span>
-                    <span className="rg-proposal-type">{prettyType(p.relationType)}</span>
-                  </div>
-                  <div className="rg-proposal-meta">
-                    <span>置信度 {(p.confidence * 100).toFixed(0)}%</span>
-                  </div>
-                  {p.rationale && <div className="rg-proposal-rationale">{p.rationale}</div>}
-                  <div className="rg-proposal-actions">
-                    <button
-                      className="rg-prop-btn reject"
-                      disabled={rejectingId === p.id}
-                      onClick={() => void handleRejectProposal(p.id)}
-                    >
-                      忽略
-                    </button>
-                    <button
-                      className="rg-prop-btn approve"
-                      disabled={approvingId === p.id}
-                      onClick={() => void handleApproveProposal(p.id)}
-                    >
-                      {approvingId === p.id ? "…" : "批准"}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="rg-range-hint">候选关系审核通过后才会进入图谱。</p>
-          </section>
-        )}
-
-        <section className="rg-section">
-          <button className="rg-reload" onClick={() => setReloadKey((k) => k + 1)}>
-            <GIcon name="refresh" size={14} /><span>重新加载图谱</span>
+          <button className="rg-icon-btn" title="重置筛选" onClick={resetFilters}>
+            <GIcon name="target" size={15} />
           </button>
-        </section>
-      </div>
-    </aside>
-
-    {/* --- Center: canvas --------------------------------------------------- */}
-    <section className="rg-center">
-      <header className="rg-toolbar">
-        <div className="rg-toolbar-title">
-          <strong>{graphTitle}</strong>
-          {isDemo && <span className="rg-demo-chip">示例数据</span>}
         </div>
-        <span className="rg-meta-chip">{visibleNodeCount} 节点</span>
-        <span className="rg-meta-chip">{visibleEdgeCount} 关系</span>
-        <div className="rg-toolbar-spacer" />
-        <button
-          className="rg-tool"
-          onClick={() => {
-            if (selected) {
-              onAskAI(`请针对文档 "${selected.path}"（${selected.title}），深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`, false);
-            } else {
-              handleStartGlobalRelationAnalysis();
-            }
+        <div className="rg-panel-scroll">
+          <label className="rg-search">
+            <GIcon name="search" size={15} />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder="查找节点"
+            />
+            {q && (
+              <button className="rg-clear" aria-label="清除搜索" onClick={() => setQuery("")}>
+                <GIcon name="x" size={12} />
+              </button>
+            )}
+          </label>
+
+          <div className="rg-range-switch" role="group" aria-label="视图范围">
+            {(Object.keys(RANGE_LABELS) as RangeMode[]).map((mode) => (
+              <button
+                key={mode}
+                className={rangeMode === mode ? "active" : ""}
+                onClick={() => setRangeMode(mode)}
+              >
+                {RANGE_LABELS[mode]}
+              </button>
+            ))}
+          </div>
+          <p className="rg-range-hint">
+            {rangeMode === "global"
+              ? "显示图谱中的全部节点"
+              : `围绕${selected ? "选中节点" : "核心文档"}展示邻域`}
+          </p>
+
+          <section className="rg-section">
+            <div className="rg-kicker">
+              <span>图谱概览</span>
+            </div>
+            <div className="rg-stats">
+              <div className="rg-stat">
+                <strong>{visibleNodeCount}</strong>
+                <span>可见节点</span>
+              </div>
+              <div className="rg-stat">
+                <strong>{visibleEdgeCount}</strong>
+                <span>关系边</span>
+              </div>
+              <div className="rg-stat">
+                <strong>{model.clusters.length}</strong>
+                <span>目录簇</span>
+              </div>
+              <div className="rg-stat">
+                <strong>{pendingProposals.length}</strong>
+                <span>待审核</span>
+              </div>
+            </div>
+          </section>
+
+          {model.types.length > 0 && (
+            <section className="rg-section">
+              <div className="rg-kicker">
+                <span>关系类型</span>
+                <button onClick={toggleAllTypes}>{allTypesOff ? "全部显示" : "全部隐藏"}</button>
+              </div>
+              <div className="rg-type-list">
+                {model.types.map((t) => {
+                  const on = typeSet.has(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      className={on ? "rg-type-row on" : "rg-type-row off"}
+                      onClick={() => toggleType(t.id)}
+                    >
+                      <span className="rg-type-check">
+                        {on && <GIcon name="check" size={11} strokeWidth={2.2} />}
+                      </span>
+                      <span className="rg-type-name">
+                        <i className="rg-type-dot" style={{ background: t.color }} />
+                        {t.label}
+                      </span>
+                      <span className="rg-type-count">{t.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {model.clusters.length > 1 && (
+            <section className="rg-section">
+              <div className="rg-kicker">
+                <span>目录簇</span>
+                <button onClick={() => setActiveCluster(null)}>清除</button>
+              </div>
+              <div className="rg-cluster-list">
+                {model.clusters.map((c) => {
+                  const maxCount = model.clusters[0]?.count ?? c.count;
+                  return (
+                    <button
+                      key={c.id}
+                      className={activeCluster === c.id ? "rg-cluster active" : "rg-cluster"}
+                      style={
+                        {
+                          "--cluster-color": c.color,
+                          "--cluster-progress": `${Math.max(12, Math.round((c.count / Math.max(1, maxCount)) * 100))}%`,
+                        } as React.CSSProperties
+                      }
+                      onClick={() => setActiveCluster(activeCluster === c.id ? null : c.id)}
+                    >
+                      <span className="rg-cluster-top">
+                        <i className="rg-cluster-swatch" />
+                        <span className="rg-cluster-name">{c.id}</span>
+                        <span className="rg-cluster-count">{c.count} 节点</span>
+                      </span>
+                      <span className="rg-cluster-bar">
+                        <span />
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          <section className="rg-section">
+            <div className="rg-kicker">
+              <span>关系设置</span>
+            </div>
+            <div className="rg-control-row">
+              <span>仅显示强关系</span>
+              <button
+                className={strongOnly ? "rg-toggle on" : "rg-toggle"}
+                aria-label="仅显示强关系"
+                onClick={() => setStrongOnly((v) => !v)}
+              />
+            </div>
+            <div className="rg-control-row">
+              <span>显示关系名称</span>
+              <button
+                className={showLabels ? "rg-toggle on" : "rg-toggle"}
+                aria-label="显示关系名称"
+                onClick={() => setShowLabels((v) => !v)}
+              />
+            </div>
+            <p className="rg-range-hint">强关系 = 有证据支撑或对称的关系；弱关系以虚线显示。</p>
+          </section>
+
+          {pendingProposals.length > 0 && (
+            <section className="rg-section">
+              <div className="rg-kicker-row">
+                <div className="rg-kicker">
+                  <span>待审核候选 · {pendingProposals.length}</span>
+                </div>
+                <button
+                  className="rg-prop-all-btn"
+                  disabled={approvingAll}
+                  onClick={() => void handleApproveAllProposals()}
+                >
+                  {approvingAll ? "批准中…" : "全部批准"}
+                </button>
+              </div>
+              <div className="rg-proposal-list">
+                {pendingProposals.slice(0, 10).map((p) => (
+                  <div key={p.id} className="rg-proposal" title={p.rationale}>
+                    <div className="rg-proposal-header">
+                      <span className="rg-proposal-title">
+                        {docName(p.sourcePath)} → {docName(p.targetPath)}
+                      </span>
+                      <span className="rg-proposal-type">{prettyType(p.relationType)}</span>
+                    </div>
+                    <div className="rg-proposal-meta">
+                      <span>置信度 {(p.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                    {p.rationale && <div className="rg-proposal-rationale">{p.rationale}</div>}
+                    <div className="rg-proposal-actions">
+                      <button
+                        className="rg-prop-btn reject"
+                        disabled={rejectingId === p.id}
+                        onClick={() => void handleRejectProposal(p.id)}
+                      >
+                        忽略
+                      </button>
+                      <button
+                        className="rg-prop-btn approve"
+                        disabled={approvingId === p.id}
+                        onClick={() => void handleApproveProposal(p.id)}
+                      >
+                        {approvingId === p.id ? "…" : "批准"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="rg-range-hint">候选关系审核通过后才会进入图谱。</p>
+            </section>
+          )}
+
+          <section className="rg-section">
+            <button className="rg-reload" onClick={() => setReloadKey((k) => k + 1)}>
+              <GIcon name="refresh" size={14} />
+              <span>重新加载图谱</span>
+            </button>
+          </section>
+        </div>
+      </aside>
+
+      {/* --- Center: canvas --------------------------------------------------- */}
+      <section className="rg-center">
+        <header className="rg-toolbar">
+          <div className="rg-toolbar-title">
+            <strong>{graphTitle}</strong>
+            {isDemo && <span className="rg-demo-chip">示例数据</span>}
+          </div>
+          <span className="rg-meta-chip">{visibleNodeCount} 节点</span>
+          <span className="rg-meta-chip">{visibleEdgeCount} 关系</span>
+          <div className="rg-toolbar-spacer" />
+          <button
+            className="rg-tool"
+            onClick={() => {
+              if (selected) {
+                onAskAI(
+                  `请针对文档 "${selected.path}"（${selected.title}），深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`,
+                  false,
+                );
+              } else {
+                handleStartGlobalRelationAnalysis();
+              }
+            }}
+            title="让 AI 深度分析文档关系"
+          >
+            <GIcon name="spark" size={14} />
+            <span>{selected ? "AI 分析当前文档" : "AI 挖掘关系"}</span>
+          </button>
+          <button className="rg-tool" onClick={fit}>
+            <GIcon name="fit" size={14} />
+            <span>适应画布</span>
+          </button>
+          <button
+            className="rg-tool"
+            disabled={!model.rootId}
+            onClick={() => model.rootId && selectNode(model.rootId, true)}
+          >
+            <GIcon name="target" size={14} />
+            <span>聚焦核心</span>
+          </button>
+          <button
+            className={showLabels ? "rg-tool active" : "rg-tool"}
+            onClick={() => setShowLabels((v) => !v)}
+          >
+            <GIcon name="label" size={14} />
+            <span>关系名称</span>
+          </button>
+        </header>
+
+        <div
+          ref={stageRef}
+          className={panning ? "rg-stage panning" : "rg-stage"}
+          onPointerDown={(e) => {
+            if ((e.target as HTMLElement).closest(".rg-node, .rg-minimap, .rg-zoom, .rg-legend"))
+              return;
+            panRef.current = { px: e.clientX, py: e.clientY, ox: camera.x, oy: camera.y };
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setPanning(true);
           }}
-          title="让 AI 深度分析文档关系"
+          onPointerMove={(e) => {
+            const p = panRef.current;
+            if (!p) return;
+            setCamera((prev) => ({
+              ...prev,
+              x: p.ox + e.clientX - p.px,
+              y: p.oy + e.clientY - p.py,
+            }));
+          }}
+          onPointerUp={() => {
+            panRef.current = null;
+            setPanning(false);
+          }}
+          onPointerCancel={() => {
+            panRef.current = null;
+            setPanning(false);
+          }}
         >
-          <GIcon name="spark" size={14} />
-          <span>{selected ? "AI 分析当前文档" : "AI 挖掘关系"}</span>
-        </button>
-        <button className="rg-tool" onClick={fit}><GIcon name="fit" size={14} /><span>适应画布</span></button>
-        <button className="rg-tool" disabled={!model.rootId} onClick={() => model.rootId && selectNode(model.rootId, true)}><GIcon name="target" size={14} /><span>聚焦核心</span></button>
-        <button className={showLabels ? "rg-tool active" : "rg-tool"} onClick={() => setShowLabels((v) => !v)}><GIcon name="label" size={14} /><span>关系名称</span></button>
-      </header>
+          <div className="rg-tip">
+            <span className="pulse" />
+            拖动画布浏览 · 滚轮缩放
+          </div>
 
-      <div
-        ref={stageRef}
-        className={panning ? "rg-stage panning" : "rg-stage"}
-        onPointerDown={(e) => {
-          if ((e.target as HTMLElement).closest(".rg-node, .rg-minimap, .rg-zoom, .rg-legend")) return;
-          panRef.current = { px: e.clientX, py: e.clientY, ox: camera.x, oy: camera.y };
-          e.currentTarget.setPointerCapture(e.pointerId);
-          setPanning(true);
-        }}
-        onPointerMove={(e) => {
-          const p = panRef.current;
-          if (!p) return;
-          setCamera((prev) => ({ ...prev, x: p.ox + e.clientX - p.px, y: p.oy + e.clientY - p.py }));
-        }}
-        onPointerUp={() => { panRef.current = null; setPanning(false); }}
-        onPointerCancel={() => { panRef.current = null; setPanning(false); }}
-      >
-        <div className="rg-tip"><span className="pulse" />拖动画布浏览 · 滚轮缩放</div>
+          <div
+            className="rg-world"
+            style={{
+              width: model.world.w,
+              height: model.world.h,
+              transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})`,
+            }}
+          >
+            {model.zones.map((z, i) => (
+              <div
+                key={i}
+                className="rg-zone"
+                style={{ left: z.x, top: z.y, width: z.w, height: z.h }}
+              >
+                <span>{z.label}</span>
+              </div>
+            ))}
 
-        <div className="rg-world" style={{ width: model.world.w, height: model.world.h, transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.scale})` }}>
-          {model.zones.map((z, i) => (
-            <div key={i} className="rg-zone" style={{ left: z.x, top: z.y, width: z.w, height: z.h }}><span>{z.label}</span></div>
-          ))}
+            <svg
+              className="rg-edge-layer"
+              viewBox={`0 0 ${model.world.w} ${model.world.h}`}
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <defs>
+                {model.types.map((t) => (
+                  <marker
+                    key={t.id}
+                    id={`rg-arrow-${t.id}`}
+                    markerWidth="8"
+                    markerHeight="8"
+                    refX="7"
+                    refY="4"
+                    orient="auto"
+                    markerUnits="strokeWidth"
+                  >
+                    <path d="M0,0 L8,4 L0,8 z" fill={rgba(t.color, 0.85)} />
+                  </marker>
+                ))}
+              </defs>
+              {model.edges.map((e) => {
+                if (!visibility.edgeIds.has(e.id)) return null;
+                const touched =
+                  selectedId !== null && (e.from === selectedId || e.to === selectedId);
+                return (
+                  <g key={e.id}>
+                    <path
+                      className={e.strong ? "rg-edge strong" : "rg-edge weak"}
+                      d={e.d}
+                      markerEnd={`url(#rg-arrow-${e.type})`}
+                      stroke={rgba(e.color, touched ? 0.92 : 0.5)}
+                      strokeWidth={touched ? 2 : 1.5}
+                    />
+                    {showLabels && (
+                      <text
+                        className={touched ? "rg-edge-label hl" : "rg-edge-label"}
+                        x={e.lx}
+                        y={e.ly - 7}
+                        textAnchor="middle"
+                      >
+                        {e.label}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </svg>
 
-          <svg className="rg-edge-layer" viewBox={`0 0 ${model.world.w} ${model.world.h}`} preserveAspectRatio="none" aria-hidden="true">
-            <defs>
-              {model.types.map((t) => (
-                <marker key={t.id} id={`rg-arrow-${t.id}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-                  <path d="M0,0 L8,4 L0,8 z" fill={rgba(t.color, 0.85)} />
-                </marker>
-              ))}
-            </defs>
-            {model.edges.map((e) => {
-              if (!visibility.edgeIds.has(e.id)) return null;
-              const touched = selectedId !== null && (e.from === selectedId || e.to === selectedId);
+            {model.nodes.map((n) => {
+              if (!visibility.nodeIds.has(n.id)) return null;
+              const hit = q !== "" && nodeMatches(n);
+              const dim = q !== "" && !hit;
               return (
-                <g key={e.id}>
-                  <path
-                    className={e.strong ? "rg-edge strong" : "rg-edge weak"}
-                    d={e.d}
-                    markerEnd={`url(#rg-arrow-${e.type})`}
-                    stroke={rgba(e.color, touched ? 0.92 : 0.5)}
-                    strokeWidth={touched ? 2 : 1.5}
-                  />
-                  {showLabels && (
-                    <text className={touched ? "rg-edge-label hl" : "rg-edge-label"} x={e.lx} y={e.ly - 7} textAnchor="middle">{e.label}</text>
+                <button
+                  key={n.id}
+                  className={[
+                    "rg-node",
+                    n.isRoot ? "rg-root" : "",
+                    n.id === selectedId ? "selected" : "",
+                    hit ? "search-hit" : "",
+                    dim ? "search-dim" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  style={{ left: n.x, top: n.y, width: n.w }}
+                  title={n.path}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    selectNode(n.id);
+                  }}
+                >
+                  <span className="rg-node-icon">
+                    <GIcon name="file" size={17} />
+                  </span>
+                  <span className="rg-node-copy">
+                    <strong>{n.title}</strong>
+                    <span>{n.path}</span>
+                  </span>
+                  <span className="rg-node-badge">{n.degree}</span>
+                  {n.isRoot && (
+                    <span className="rg-node-foot">
+                      <span>核心文档</span>
+                      <i />
+                      <span>{n.outCount} 出边</span>
+                      <i />
+                      <span>{n.inCount} 入边</span>
+                    </span>
                   )}
-                </g>
+                </button>
               );
             })}
-          </svg>
-
-          {model.nodes.map((n) => {
-            if (!visibility.nodeIds.has(n.id)) return null;
-            const hit = q !== "" && nodeMatches(n);
-            const dim = q !== "" && !hit;
-            return (
-              <button
-                key={n.id}
-                className={[
-                  "rg-node",
-                  n.isRoot ? "rg-root" : "",
-                  n.id === selectedId ? "selected" : "",
-                  hit ? "search-hit" : "",
-                  dim ? "search-dim" : "",
-                ].filter(Boolean).join(" ")}
-                style={{ left: n.x, top: n.y, width: n.w }}
-                title={n.path}
-                onClick={(e) => { e.stopPropagation(); selectNode(n.id); }}
-              >
-                <span className="rg-node-icon"><GIcon name="file" size={17} /></span>
-                <span className="rg-node-copy">
-                  <strong>{n.title}</strong>
-                  <span>{n.path}</span>
-                </span>
-                <span className="rg-node-badge">{n.degree}</span>
-                {n.isRoot && (
-                  <span className="rg-node-foot">
-                    <span>核心文档</span><i /><span>{n.outCount} 出边</span><i /><span>{n.inCount} 入边</span>
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {visibleNodeCount === 0 && (
-          <div className="rg-stage-empty">当前筛选下没有可显示的节点<br />尝试放宽关系类型或目录簇筛选</div>
-        )}
-
-        {model.types.length > 0 && (
-          <div className="rg-legend">
-            {model.types.slice(0, 5).map((t) => (
-              <span key={t.id} className="rg-legend-item"><i style={{ background: t.color }} />{t.label}</span>
-            ))}
-            {model.types.length > 5 && <span className="rg-legend-item">+{model.types.length - 5}</span>}
           </div>
-        )}
 
-        <div className="rg-zoom">
-          <button aria-label="缩小" onClick={() => { const el = stageRef.current; if (el) zoomAt(el.clientWidth / 2, el.clientHeight / 2, 1 / 1.15); }}><GIcon name="minus" size={14} /></button>
-          <span className="rg-zoom-value">{Math.round(camera.scale * 100)}%</span>
-          <button aria-label="放大" onClick={() => { const el = stageRef.current; if (el) zoomAt(el.clientWidth / 2, el.clientHeight / 2, 1.15); }}><GIcon name="plus" size={14} /></button>
-        </div>
+          {visibleNodeCount === 0 && (
+            <div className="rg-stage-empty">
+              当前筛选下没有可显示的节点
+              <br />
+              尝试放宽关系类型或目录簇筛选
+            </div>
+          )}
 
-        <Minimap model={model} camera={camera} visibleNodeIds={visibility.nodeIds} stageSize={stageSize} onFit={fit} />
-      </div>
-    </section>
-
-    {/* --- Right: inspector -------------------------------------------------- */}
-    <aside className="rg-inspector">
-      <div className="rg-panel-head">
-        <div className="rg-inspect-icon"><GIcon name="file" size={16} /></div>
-        <div className="rg-panel-copy">
-          <div className="rg-panel-title">节点详情</div>
-          <div className="rg-panel-sub">查看定义与关系</div>
-        </div>
-      </div>
-      <div className="rg-panel-scroll rg-inspect-scroll">
-        {selected === null
-          ? <div className="rg-relation-empty">在画布中选择一个节点查看详情</div>
-          : <>
-            <div className="rg-inspect-card">
-              <div className="rg-inspect-kind">
-                <span className="rg-kind-badge"><i />文档</span>
-                <div className="rg-inspect-actions">
-                  <button className="rg-icon-btn" title="复制节点链接" onClick={() => void copyNodeLink()}><GIcon name="link" size={14} /></button>
-                  <button className="rg-icon-btn" title="更多操作"><GIcon name="more" size={15} /></button>
-                </div>
-              </div>
-              <h2 className="rg-inspect-title">{selected.title}</h2>
-              <div className="rg-inspect-path">{selected.path}</div>
-              <div className="rg-meta-grid">
-                <div className="rg-meta-cell"><strong>{selected.degree}</strong><span>直接关系</span></div>
-                <div className="rg-meta-cell"><strong>{selected.outCount}</strong><span>出边</span></div>
-                <div className="rg-meta-cell"><strong>{selected.inCount}</strong><span>入边</span></div>
-              </div>
-              {nodeTypeTags.length > 0 && (
-                <div className="rg-inspect-tags">
-                  <span className="rg-tag">{selected.cluster}</span>
-                  {nodeTypeTags.map((tag) => <span key={tag} className="rg-tag">{tag}</span>)}
-                </div>
+          {model.types.length > 0 && (
+            <div className="rg-legend">
+              {model.types.slice(0, 5).map((t) => (
+                <span key={t.id} className="rg-legend-item">
+                  <i style={{ background: t.color }} />
+                  {t.label}
+                </span>
+              ))}
+              {model.types.length > 5 && (
+                <span className="rg-legend-item">+{model.types.length - 5}</span>
               )}
             </div>
+          )}
 
-            <section className="rg-section">
-              <div className="rg-kicker"><span>关联关系</span></div>
-              <div className="rg-relation-tabs">
-                <button className={relationTab === "all" ? "active" : ""} onClick={() => setRelationTab("all")}>全部 {relEdges.length}</button>
-                <button className={relationTab === "out" ? "active" : ""} onClick={() => setRelationTab("out")}>出边 {outEdges.length}</button>
-                <button className={relationTab === "in" ? "active" : ""} onClick={() => setRelationTab("in")}>入边 {inEdges.length}</button>
-              </div>
-              <div className="rg-relation-list">
-                {tabbedEdges.length === 0
-                  ? <div className="rg-relation-empty">当前筛选下没有可显示的关系</div>
-                  : tabbedEdges.map((e) => {
-                    const outbound = e.from === selectedId;
-                    const otherId = outbound ? e.to : e.from;
-                    const other = model.nodes.find((n) => n.id === otherId);
-                    if (!other) return null;
-                    return (
-                      <button key={e.id} className="rg-relation-item" style={{ "--rel-color": e.color, "--rel-soft": rgba(e.color, 0.12) } as React.CSSProperties} onClick={() => selectNode(otherId, true)}>
-                        <span className="rg-relation-icon"><GIcon name="file" size={14} /></span>
-                        <span className="rg-relation-copy">
-                          <strong>{other.title}</strong>
-                          <span>{e.label} · {e.strong ? "强关系" : "弱关系"}</span>
-                        </span>
-                        <span className="rg-relation-direction">{outbound ? "→ 出边" : "← 入边"}</span>
-                      </button>
-                    );
-                  })}
-              </div>
-            </section>
-            <section className="rg-section">
-              <div className="rg-kicker"><span>图谱洞察</span></div>
-              <div className="rg-insight-card">
-                <div className="rg-insight-head"><GIcon name="spark" size={14} /><span>关系解读</span></div>
-                <p>{insightFor(selected, relEdges.length)}</p>
-              </div>
-            </section>
-          </>}
-      </div>
-      <div className="rg-inspector-footer">
-        <button
-          className="rg-action"
-          onClick={() => {
-            if (selected) {
-              onAskAI(`请针对文档 "${selected.path}"（${selected.title}），深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`, false);
-            } else {
-              handleStartGlobalRelationAnalysis();
-            }
-          }}
-        >
-          <GIcon name="spark" size={14} />
-          <span>AI 分析关联</span>
-        </button>
-        <button className="rg-action primary" onClick={onOpenDocuments}><GIcon name="external" size={14} /><span>打开文档</span></button>
-      </div>
-    </aside>
+          <div className="rg-zoom">
+            <button
+              aria-label="缩小"
+              onClick={() => {
+                const el = stageRef.current;
+                if (el) zoomAt(el.clientWidth / 2, el.clientHeight / 2, 1 / 1.15);
+              }}
+            >
+              <GIcon name="minus" size={14} />
+            </button>
+            <span className="rg-zoom-value">{Math.round(camera.scale * 100)}%</span>
+            <button
+              aria-label="放大"
+              onClick={() => {
+                const el = stageRef.current;
+                if (el) zoomAt(el.clientWidth / 2, el.clientHeight / 2, 1.15);
+              }}
+            >
+              <GIcon name="plus" size={14} />
+            </button>
+          </div>
 
-    <div className={toast ? "toast show" : "toast"} role="status">{toast}</div>
-  </div>;
+          <Minimap
+            model={model}
+            camera={camera}
+            visibleNodeIds={visibility.nodeIds}
+            stageSize={stageSize}
+            onFit={fit}
+          />
+        </div>
+      </section>
+
+      {/* --- Right: inspector -------------------------------------------------- */}
+      <aside className="rg-inspector">
+        <div className="rg-panel-head">
+          <div className="rg-inspect-icon">
+            <GIcon name="file" size={16} />
+          </div>
+          <div className="rg-panel-copy">
+            <div className="rg-panel-title">节点详情</div>
+            <div className="rg-panel-sub">查看定义与关系</div>
+          </div>
+        </div>
+        <div className="rg-panel-scroll rg-inspect-scroll">
+          {selected === null ? (
+            <div className="rg-relation-empty">在画布中选择一个节点查看详情</div>
+          ) : (
+            <>
+              <div className="rg-inspect-card">
+                <div className="rg-inspect-kind">
+                  <span className="rg-kind-badge">
+                    <i />
+                    文档
+                  </span>
+                  <div className="rg-inspect-actions">
+                    <button
+                      className="rg-icon-btn"
+                      title="复制节点链接"
+                      onClick={() => void copyNodeLink()}
+                    >
+                      <GIcon name="link" size={14} />
+                    </button>
+                    <button className="rg-icon-btn" title="更多操作">
+                      <GIcon name="more" size={15} />
+                    </button>
+                  </div>
+                </div>
+                <h2 className="rg-inspect-title">{selected.title}</h2>
+                <div className="rg-inspect-path">{selected.path}</div>
+                <div className="rg-meta-grid">
+                  <div className="rg-meta-cell">
+                    <strong>{selected.degree}</strong>
+                    <span>直接关系</span>
+                  </div>
+                  <div className="rg-meta-cell">
+                    <strong>{selected.outCount}</strong>
+                    <span>出边</span>
+                  </div>
+                  <div className="rg-meta-cell">
+                    <strong>{selected.inCount}</strong>
+                    <span>入边</span>
+                  </div>
+                </div>
+                {nodeTypeTags.length > 0 && (
+                  <div className="rg-inspect-tags">
+                    <span className="rg-tag">{selected.cluster}</span>
+                    {nodeTypeTags.map((tag) => (
+                      <span key={tag} className="rg-tag">
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <section className="rg-section">
+                <div className="rg-kicker">
+                  <span>关联关系</span>
+                </div>
+                <div className="rg-relation-tabs">
+                  <button
+                    className={relationTab === "all" ? "active" : ""}
+                    onClick={() => setRelationTab("all")}
+                  >
+                    全部 {relEdges.length}
+                  </button>
+                  <button
+                    className={relationTab === "out" ? "active" : ""}
+                    onClick={() => setRelationTab("out")}
+                  >
+                    出边 {outEdges.length}
+                  </button>
+                  <button
+                    className={relationTab === "in" ? "active" : ""}
+                    onClick={() => setRelationTab("in")}
+                  >
+                    入边 {inEdges.length}
+                  </button>
+                </div>
+                <div className="rg-relation-list">
+                  {tabbedEdges.length === 0 ? (
+                    <div className="rg-relation-empty">当前筛选下没有可显示的关系</div>
+                  ) : (
+                    tabbedEdges.map((e) => {
+                      const outbound = e.from === selectedId;
+                      const otherId = outbound ? e.to : e.from;
+                      const other = model.nodes.find((n) => n.id === otherId);
+                      if (!other) return null;
+                      return (
+                        <button
+                          key={e.id}
+                          className="rg-relation-item"
+                          style={
+                            {
+                              "--rel-color": e.color,
+                              "--rel-soft": rgba(e.color, 0.12),
+                            } as React.CSSProperties
+                          }
+                          onClick={() => selectNode(otherId, true)}
+                        >
+                          <span className="rg-relation-icon">
+                            <GIcon name="file" size={14} />
+                          </span>
+                          <span className="rg-relation-copy">
+                            <strong>{other.title}</strong>
+                            <span>
+                              {e.label} · {e.strong ? "强关系" : "弱关系"}
+                            </span>
+                          </span>
+                          <span className="rg-relation-direction">
+                            {outbound ? "→ 出边" : "← 入边"}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </section>
+              <section className="rg-section">
+                <div className="rg-kicker">
+                  <span>图谱洞察</span>
+                </div>
+                <div className="rg-insight-card">
+                  <div className="rg-insight-head">
+                    <GIcon name="spark" size={14} />
+                    <span>关系解读</span>
+                  </div>
+                  <p>{insightFor(selected, relEdges.length)}</p>
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+        <div className="rg-inspector-footer">
+          <button
+            className="rg-action"
+            onClick={() => {
+              if (selected) {
+                onAskAI(
+                  `请针对文档 "${selected.path}"（${selected.title}），深入分析它与知识库中其他文档之间的上下游依赖与逻辑关联，并使用 relation_proposal_create 工具生成关系提案。`,
+                  false,
+                );
+              } else {
+                handleStartGlobalRelationAnalysis();
+              }
+            }}
+          >
+            <GIcon name="spark" size={14} />
+            <span>AI 分析关联</span>
+          </button>
+          <button className="rg-action primary" onClick={onOpenDocuments}>
+            <GIcon name="external" size={14} />
+            <span>打开文档</span>
+          </button>
+        </div>
+      </aside>
+
+      <div className={toast ? "toast show" : "toast"} role="status">
+        {toast}
+      </div>
+    </div>
+  );
 }
 
 function insightFor(node: GraphNode, degree: number): string {
@@ -1352,7 +1860,13 @@ function insightFor(node: GraphNode, degree: number): string {
 
 // --- Minimap -------------------------------------------------------------------
 
-function Minimap({ model, camera, visibleNodeIds, stageSize, onFit }: {
+function Minimap({
+  model,
+  camera,
+  visibleNodeIds,
+  stageSize,
+  onFit,
+}: {
   model: GraphModel;
   camera: { x: number; y: number; scale: number };
   visibleNodeIds: Set<string>;
@@ -1373,7 +1887,15 @@ function Minimap({ model, camera, visibleNodeIds, stageSize, onFit }: {
     <div className="rg-minimap" title="点击适应画布" onClick={onFit}>
       <svg viewBox={`0 0 ${W} ${H}`}>
         {model.zones.map((z, i) => (
-          <rect key={i} className="rg-mini-zone" x={z.x * r + offX} y={z.y * r + offY} width={z.w * r} height={z.h * r} rx={2.5} />
+          <rect
+            key={i}
+            className="rg-mini-zone"
+            x={z.x * r + offX}
+            y={z.y * r + offY}
+            width={z.w * r}
+            height={z.h * r}
+            rx={2.5}
+          />
         ))}
         {model.nodes.map((n) => (
           <rect
@@ -1386,7 +1908,14 @@ function Minimap({ model, camera, visibleNodeIds, stageSize, onFit }: {
             rx={1.5}
           />
         ))}
-        <rect className="rg-mini-viewport" x={vx * r + offX} y={vy * r + offY} width={Math.max(6, vw * r)} height={Math.max(5, vh * r)} rx={2} />
+        <rect
+          className="rg-mini-viewport"
+          x={vx * r + offX}
+          y={vy * r + offY}
+          width={Math.max(6, vw * r)}
+          height={Math.max(5, vh * r)}
+          rx={2}
+        />
       </svg>
     </div>
   );

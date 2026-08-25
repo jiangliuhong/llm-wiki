@@ -61,7 +61,8 @@ function runInit(options: InitOptions, cmd: Command): void {
     createWorkspaceManifest(root, existing?.title ?? options.title);
     const createdSkills = createSkills(root, existing?.kb?.include ?? []);
     logger.warn(
-      `A config already exists at ${getConfigPath(root)}.\n` + `The existing config was not changed.`,
+      `A config already exists at ${getConfigPath(root)}.\n` +
+        `The existing config was not changed.`,
     );
     logCreatedSkills(createdSkills, root);
     return;

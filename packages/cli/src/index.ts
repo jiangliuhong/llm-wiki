@@ -50,9 +50,7 @@ program
   // Global options, declared on the program and readable from every subcommand
   // via `cmd.optsWithGlobals()`. Each is also bound to an environment variable
   // so an orchestrator can set it once for a whole pipeline run.
-  .addOption(
-    new Option("--workspace <id>", "Registered workspace id.").env("LLM_WIKI_WORKSPACE"),
-  )
+  .addOption(new Option("--workspace <id>", "Registered workspace id.").env("LLM_WIKI_WORKSPACE"))
   // `--kb` remains a migration alias for scripts using the pre-V1
   // terminology. New integrations must use --workspace.
   .addOption(new Option("--kb <id>", "Legacy knowledge-base id.").env("LLM_WIKI_KB"))

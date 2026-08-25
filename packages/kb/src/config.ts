@@ -37,7 +37,7 @@ export function getDefaultKbConfig(): KbConfig {
  */
 export function assertKbConfig(value: unknown): asserts value is KbConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error('Invalid kb config: must be an object.');
+    throw new Error("Invalid kb config: must be an object.");
   }
   const record = value as Record<string, unknown>;
 

@@ -61,23 +61,24 @@ export function resolveGlobalOptions(raw: RawGlobalOptions = {}): GlobalContext 
   const discovered = findWorkspaceManifest();
   const requestedWorkspace =
     raw.workspace ?? process.env[ENV.workspace] ?? raw.kb ?? process.env[ENV.kb];
-  const workspacePath = requestedWorkspace && looksLikePath(requestedWorkspace)
-    ? nodePath.resolve(process.cwd(), requestedWorkspace)
-    : undefined;
+  const workspacePath =
+    requestedWorkspace && looksLikePath(requestedWorkspace)
+      ? nodePath.resolve(process.cwd(), requestedWorkspace)
+      : undefined;
   const pathWorkspace = workspacePath ? findWorkspaceManifest(workspacePath) : undefined;
   const workspaceId = workspacePath
     ? pathWorkspace?.manifest.id
-    : requestedWorkspace ?? discovered?.manifest.id;
+    : (requestedWorkspace ?? discovered?.manifest.id);
   const kbId = workspaceId;
   const registered = workspacePath
     ? workspaceId
       ? tryResolveRegistryEntry(workspaceId)
       : undefined
     : requestedWorkspace
-    ? resolveRegistryEntry(requestedWorkspace)
-    : workspaceId
-      ? tryResolveRegistryEntry(workspaceId)
-      : undefined;
+      ? resolveRegistryEntry(requestedWorkspace)
+      : workspaceId
+        ? tryResolveRegistryEntry(workspaceId)
+        : undefined;
   const root = resolveAbsolute(
     raw.root,
     process.env[ENV.root],

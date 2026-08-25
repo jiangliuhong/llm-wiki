@@ -53,14 +53,20 @@ export function extractAssistantThinking(content: unknown): string {
   if (!Array.isArray(content)) return "";
   let thinking = "";
   for (const part of content as { type?: string; thinking?: string }[]) {
-    if (typeof part === "object" && part?.type === "thinking" && typeof part.thinking === "string") {
+    if (
+      typeof part === "object" &&
+      part?.type === "thinking" &&
+      typeof part.thinking === "string"
+    ) {
       thinking += part.thinking;
     }
   }
   return thinking;
 }
 
-export function assistantOutcomeOf(entries: { type: string; message?: unknown }[]): AssistantOutcome {
+export function assistantOutcomeOf(
+  entries: { type: string; message?: unknown }[],
+): AssistantOutcome {
   let outcome: AssistantOutcome = { text: "", thinking: "" };
 
   for (const entry of entries) {
@@ -207,13 +213,15 @@ export class AgentSessionWrapper {
 
     for (const entry of entries) {
       if (!entry) continue;
-      const msg = (entry as { message?: unknown }).message as {
-        role?: string;
-        toolCallId?: string;
-        id?: string;
-        content?: unknown;
-        isError?: boolean;
-      } | undefined;
+      const msg = (entry as { message?: unknown }).message as
+        | {
+            role?: string;
+            toolCallId?: string;
+            id?: string;
+            content?: unknown;
+            isError?: boolean;
+          }
+        | undefined;
 
       if (msg && msg.role === "tool") {
         const id = msg.toolCallId || msg.id;
@@ -250,7 +258,7 @@ export class AgentSessionWrapper {
       const role = rawMsg.role ?? "user";
       const text = extractAssistantText(rawMsg.content);
       const thinking = role === "assistant" ? extractAssistantThinking(rawMsg.content) : undefined;
-      const createdAt = rawMsg.timestamp ?? (Date.now() - (entries.length - i) * 1000);
+      const createdAt = rawMsg.timestamp ?? Date.now() - (entries.length - i) * 1000;
 
       // Collect tool calls if content contains tool_call parts
       const toolCalls: ToolCallRecord[] = [];
@@ -274,7 +282,8 @@ export class AgentSessionWrapper {
             part?.type === "tool-call";
 
           if (isToolCall) {
-            const toolId = part.id ?? part.toolCallId ?? `tool-${Math.random().toString(36).slice(2, 8)}`;
+            const toolId =
+              part.id ?? part.toolCallId ?? `tool-${Math.random().toString(36).slice(2, 8)}`;
             const toolName = part.name ?? part.toolName ?? "unknown";
             const args = part.input ?? part.args ?? part.arguments ?? {};
             const matchedResult = toolResults.get(toolId);
@@ -318,10 +327,16 @@ export class AgentSessionWrapper {
 
   async sendPrompt(text: string, runId?: string): Promise<{ text: string; thinking: string }> {
     if (!this.alive) {
-      throw new SessionHostError("PI_SESSION_NOT_FOUND", `Session ${this.sessionId} is no longer alive.`);
+      throw new SessionHostError(
+        "PI_SESSION_NOT_FOUND",
+        `Session ${this.sessionId} is no longer alive.`,
+      );
     }
     if (this.running) {
-      throw new SessionHostError("PI_SESSION_BUSY", `Session ${this.sessionId} is currently running another request.`);
+      throw new SessionHostError(
+        "PI_SESSION_BUSY",
+        `Session ${this.sessionId} is currently running another request.`,
+      );
     }
 
     this.running = true;
@@ -397,7 +412,10 @@ export class AgentSessionWrapper {
 
   async compact(): Promise<void> {
     if (!this.alive) {
-      throw new SessionHostError("PI_SESSION_NOT_FOUND", `Session ${this.sessionId} is no longer alive.`);
+      throw new SessionHostError(
+        "PI_SESSION_NOT_FOUND",
+        `Session ${this.sessionId} is no longer alive.`,
+      );
     }
     if (this.running) {
       throw new SessionHostError("PI_SESSION_BUSY", `Session ${this.sessionId} is busy.`);

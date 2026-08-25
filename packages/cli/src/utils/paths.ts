@@ -42,14 +42,17 @@ export function readWorkspaceManifest(cwd: string = getCwd()): WorkspaceManifest
   const manifestPath = getWorkspaceManifestPath(cwd);
   if (!nodeFs.existsSync(manifestPath)) return null;
   try {
-    const parsed = JSON.parse(nodeFs.readFileSync(manifestPath, "utf8")) as Partial<WorkspaceManifest>;
+    const parsed = JSON.parse(
+      nodeFs.readFileSync(manifestPath, "utf8"),
+    ) as Partial<WorkspaceManifest>;
     if (
       parsed.version !== 1 ||
       typeof parsed.id !== "string" ||
       typeof parsed.title !== "string" ||
       typeof parsed.root !== "string" ||
       typeof parsed.createdAt !== "string"
-    ) return null;
+    )
+      return null;
     return parsed as WorkspaceManifest;
   } catch {
     return null;

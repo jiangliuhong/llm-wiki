@@ -37,11 +37,11 @@
 
 ### 现象
 
-| 模式 | 命令 | 向量检索 | 说明 |
-|---|---|---|---|
-| 默认配置 | `llm-wiki serve` | 关闭 | `kb.embedding.enabled` 默认为 `false`，仅使用 FTS |
-| 开发模式（显式启用） | `llm-wiki serve` | ⚠️ 实验性 | sqlite-vec 可用，但内置 embedding 无真实语义 |
-| 生产模式 | `llm-wiki serve --prod` | ⚠️ 降级为 FTS-only | 原生扩展在生产打包进程内加载失败 |
+| 模式                 | 命令                    | 向量检索           | 说明                                              |
+| -------------------- | ----------------------- | ------------------ | ------------------------------------------------- |
+| 默认配置             | `llm-wiki serve`        | 关闭               | `kb.embedding.enabled` 默认为 `false`，仅使用 FTS |
+| 开发模式（显式启用） | `llm-wiki serve`        | ⚠️ 实验性          | sqlite-vec 可用，但内置 embedding 无真实语义      |
+| 生产模式             | `llm-wiki serve --prod` | ⚠️ 降级为 FTS-only | 原生扩展在生产打包进程内加载失败                  |
 
 - 默认配置下搜索结果返回 `vectorEnabled: false`，不会生成或查询向量。
 - 显式启用后，dev 模式下 `GET /api/kb/stats` 可返回 `vectorEnabled: true`。
@@ -65,6 +65,7 @@
 ### 现状下的影响
 
 系统**始终可用**：向量默认关闭；显式启用但加载失败时，`openDatabase` 仅发出 warning、置 `vectorEnabled = false`，检索退化为纯 FTS。
+
 - 日常开发与检索保持默认的 FTS-only 配置。
 - 只有验证 sqlite-vec 集成或替换为真实 embedding 后，才建议启用向量。
 

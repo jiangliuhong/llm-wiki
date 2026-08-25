@@ -53,15 +53,10 @@ export class AgentRuntimeServer {
     }
 
     if (msg.protocolVersion !== PROTOCOL_VERSION) {
-      return createResponse(
-        (msg as { id?: string }).id ?? "unknown",
-        false,
-        undefined,
-        {
-          code: "PI_PROTOCOL_ERROR",
-          message: `Expected protocolVersion "${PROTOCOL_VERSION}", received "${(msg as { protocolVersion?: string }).protocolVersion}".`,
-        },
-      );
+      return createResponse((msg as { id?: string }).id ?? "unknown", false, undefined, {
+        code: "PI_PROTOCOL_ERROR",
+        message: `Expected protocolVersion "${PROTOCOL_VERSION}", received "${(msg as { protocolVersion?: string }).protocolVersion}".`,
+      });
     }
 
     if (msg.type === "tool_result") {
@@ -96,7 +91,11 @@ export class AgentRuntimeServer {
         }
 
         case "session_prompt": {
-          const wrapper = await this.registry.getSession(msg.sessionId, msg.workspaceRoot, msg.model);
+          const wrapper = await this.registry.getSession(
+            msg.sessionId,
+            msg.workspaceRoot,
+            msg.model,
+          );
           const outcome = await wrapper.sendPrompt(msg.text, msg.runId);
           return createResponse(msg.id, true, outcome);
         }
@@ -127,15 +126,10 @@ export class AgentRuntimeServer {
         }
 
         default: {
-          return createResponse(
-            (msg as { id?: string }).id ?? "unknown",
-            false,
-            undefined,
-            {
-              code: "PI_PROTOCOL_ERROR",
-              message: `Unknown request type: ${(msg as { type?: string }).type}`,
-            },
-          );
+          return createResponse((msg as { id?: string }).id ?? "unknown", false, undefined, {
+            code: "PI_PROTOCOL_ERROR",
+            message: `Unknown request type: ${(msg as { type?: string }).type}`,
+          });
         }
       }
     } catch (err) {
@@ -172,13 +166,15 @@ export class AgentRuntimeServer {
       const trimmed = line.trim();
       if (!trimmed) return;
 
-      void this.handleLine(trimmed).then((response) => {
-        if (response) {
-          this.sendToHost(response);
-        }
-      }).catch((err) => {
-        stderr.write(`[AgentRuntimeServer] unhandled error in handleLine: ${String(err)}\n`);
-      });
+      void this.handleLine(trimmed)
+        .then((response) => {
+          if (response) {
+            this.sendToHost(response);
+          }
+        })
+        .catch((err) => {
+          stderr.write(`[AgentRuntimeServer] unhandled error in handleLine: ${String(err)}\n`);
+        });
     });
 
     rl.on("close", () => {

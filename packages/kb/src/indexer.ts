@@ -323,12 +323,8 @@ function runIndex(conn: KbConnection, projectRoot: string, options: IndexRunOpti
     // Record provenance metadata atomically with the rows it describes. The
     // counts reflect the post-index state of the DB, not just this pass's
     // deltas, so consumers (status/validate) see the true index size.
-    const fileCount = (
-      db.prepare("SELECT COUNT(*) AS c FROM files").get() as { c: number }
-    ).c;
-    const chunkCount = (
-      db.prepare("SELECT COUNT(*) AS c FROM chunks").get() as { c: number }
-    ).c;
+    const fileCount = (db.prepare("SELECT COUNT(*) AS c FROM files").get() as { c: number }).c;
+    const chunkCount = (db.prepare("SELECT COUNT(*) AS c FROM chunks").get() as { c: number }).c;
     writeIndexMetadata(db, {
       sourceRevision: options.sourceRevision,
       sourceBranch: options.sourceBranch,

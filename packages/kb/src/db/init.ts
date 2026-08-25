@@ -28,10 +28,7 @@ export interface InitSchemaOptions {
  * default `.llm-wiki/` under `projectRoot` is left untouched. Returns the
  * absolute DB path.
  */
-export function ensureKbDir(
-  projectRoot: string = process.cwd(),
-  dbPath?: string,
-): string {
+export function ensureKbDir(projectRoot: string = process.cwd(), dbPath?: string): string {
   const resolved = resolveDbPath(projectRoot, dbPath);
   nodeFs.mkdirSync(nodePath.dirname(resolved), { recursive: true });
   return resolved;

@@ -51,7 +51,7 @@ export function splitIntoChunks(text: string, options: ChunkOptions): Chunk[] {
     }
 
     const idealEnd = cursor + maxChars;
-    let end = idealEnd >= len ? len : findChunkEnd(text, cursor, idealEnd);
+    const end = idealEnd >= len ? len : findChunkEnd(text, cursor, idealEnd);
 
     const slice = text.slice(cursor, end);
     if (slice.trim().length > 0) {
@@ -96,7 +96,11 @@ function findChunkEnd(text: string, start: number, idealEnd: number): number {
 }
 
 /** Computes 1-based start/end line numbers for the slice [start, end). */
-function lineRange(text: string, start: number, end: number): { startLine: number; endLine: number } {
+function lineRange(
+  text: string,
+  start: number,
+  end: number,
+): { startLine: number; endLine: number } {
   let startLine = 1;
   for (let i = 0; i < start; i++) {
     if (text[i] === "\n") startLine++;

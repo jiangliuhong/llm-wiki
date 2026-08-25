@@ -62,15 +62,15 @@ llm-wiki serve
 llm-wiki [options] [command]
 ```
 
-| 选项              | 环境变量          | 说明                                                                     |
-| ----------------- | ----------------- | ------------------------------------------------------------------------ |
-| `-h, --help`      |                   | 显示帮助信息                                                             |
-| `-v, --version`   |                   | 显示当前版本                                                             |
-| `--workspace <id>` | `LLM_WIKI_WORKSPACE` | 使用全局注册表中的工作空间 ID                                         |
-| `--kb <id>`       | `LLM_WIKI_KB`     | 旧版知识库 ID 兼容参数                                                    |
-| `--root <path>`   | `LLM_WIKI_ROOT`   | 知识库根目录，默认为当前目录。决定 `kb.include` 的解析基准与默认 DB 位置 |
-| `--db <path>`     | `LLM_WIKI_DB`     | SQLite 索引文件路径，默认 `<root>/.llm-wiki/index.db`                    |
-| `--config <path>` | `LLM_WIKI_CONFIG` | 配置文件路径，默认 `<root>/.llm-wiki/config.json`                        |
+| 选项               | 环境变量             | 说明                                                                     |
+| ------------------ | -------------------- | ------------------------------------------------------------------------ |
+| `-h, --help`       |                      | 显示帮助信息                                                             |
+| `-v, --version`    |                      | 显示当前版本                                                             |
+| `--workspace <id>` | `LLM_WIKI_WORKSPACE` | 使用全局注册表中的工作空间 ID                                            |
+| `--kb <id>`        | `LLM_WIKI_KB`        | 旧版知识库 ID 兼容参数                                                   |
+| `--root <path>`    | `LLM_WIKI_ROOT`      | 知识库根目录，默认为当前目录。决定 `kb.include` 的解析基准与默认 DB 位置 |
+| `--db <path>`      | `LLM_WIKI_DB`        | SQLite 索引文件路径，默认 `<root>/.llm-wiki/index.db`                    |
+| `--config <path>`  | `LLM_WIKI_CONFIG`    | 配置文件路径，默认 `<root>/.llm-wiki/config.json`                        |
 
 全局选项可放在子命令之前，优先级为：命令行标志 > 环境变量 > 默认值。这让编排层（如 pi-agents）可以一次性设置环境变量，在整条流水线中复用，而不必每次重复传参：
 
